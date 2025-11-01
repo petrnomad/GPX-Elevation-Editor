@@ -789,8 +789,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
         <CardContent>
           <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
             <div className="select-none">
-              <div className="h-96 w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-96 w-full" style={{ minHeight: '384px' }}>
+                <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
                     data={chartData}
                     onMouseDown={handleChartMouseDown}
@@ -883,7 +883,11 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </div>
             </div>
             {showMap && (
-              <div className="flex flex-col gap-2" key={`map-container-${mapKey}`}>
+              <div
+                className="flex flex-col gap-2"
+                key={`map-container-${mapKey}`}
+                style={{ isolation: 'isolate' }}
+              >
                 <ElevationMap
                   key={`elevation-map-${mapKey}`}
                   points={trackPoints}

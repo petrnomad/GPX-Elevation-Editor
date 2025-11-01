@@ -23,7 +23,16 @@ export function ElevationMap({ points, hoveredPointIndex }: ElevationMapProps) {
   // Initialize map only once
   useEffect(() => {
     const initMap = async () => {
-      if (!containerRef.current || mapRef.current) return;
+      if (!containerRef.current) return;
+
+      // Check if already initialized (via our custom flag or Leaflet's)
+      const container = containerRef.current;
+      if (mapRef.current || container.dataset.mapInitialized === 'true' || (container as any)._leaflet_id) {
+        return;
+      }
+
+      // Mark as initializing
+      container.dataset.mapInitialized = 'true';
 
       const L = (await import('leaflet')).default;
 
@@ -35,11 +44,16 @@ export function ElevationMap({ points, hoveredPointIndex }: ElevationMapProps) {
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       });
 
-      if (polylinePositions.length === 0) return;
+      // Get initial positions
+      const initialPositions = points
+        .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+        .map(point => [point.lat, point.lon] as [number, number]);
+
+      if (initialPositions.length === 0) return;
 
       // Calculate center
-      const centerIndex = Math.floor(polylinePositions.length / 2);
-      const center = polylinePositions[centerIndex];
+      const centerIndex = Math.floor(initialPositions.length / 2);
+      const center = initialPositions[centerIndex];
 
       // Create map
       const map = L.map(containerRef.current).setView(center, 13);
@@ -51,7 +65,7 @@ export function ElevationMap({ points, hoveredPointIndex }: ElevationMapProps) {
       }).addTo(map);
 
       // Add polyline
-      const polyline = L.polyline(polylinePositions, {
+      const polyline = L.polyline(initialPositions, {
         color: '#2563eb',
         weight: 4,
         opacity: 0.75
@@ -64,19 +78,23 @@ export function ElevationMap({ points, hoveredPointIndex }: ElevationMapProps) {
 
     initMap();
 
-    // Cleanup on unmount
+    // Cleanup on unmount only
     return () => {
-      if (polylineRef.current) {
-        polylineRef.current.remove();
-        polylineRef.current = null;
-      }
       if (markerRef.current) {
         markerRef.current.remove();
         markerRef.current = null;
       }
+      if (polylineRef.current) {
+        polylineRef.current.remove();
+        polylineRef.current = null;
+      }
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
+      }
+      // Clear our initialization flag
+      if (containerRef.current) {
+        delete containerRef.current.dataset.mapInitialized;
       }
     };
   }, []); // Empty dependency - initialize only once
@@ -131,5 +149,18 @@ export function ElevationMap({ points, hoveredPointIndex }: ElevationMapProps) {
     updateMarker();
   }, [hoveredPointIndex, polylinePositions]);
 
-  return <div ref={containerRef} className="h-96 w-full rounded-md" />;
+  return (
+    <div
+      ref={containerRef}
+      className="h-96 w-full rounded-md"
+      style={{ position: 'relative', zIndex: 1, cursor: 'grab' }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseMove={(e) => e.stopPropagation()}
+      onMouseUp={(e) => e.stopPropagation()}
+      onMouseLeave={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
+    />
+  );
 }
