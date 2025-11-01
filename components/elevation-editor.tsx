@@ -37,6 +37,9 @@ interface ChartDataPoint {
 const HISTORY_LIMIT = 100;
 const ELEVATION_STEP_THRESHOLD = 2.5; // ignore sub-threshold steps when aggregating gain/loss
 const MEDIAN_WINDOW_SIZE = 3; // 3-point rolling median (one neighbour each side)
+const CHART_MARGINS = { top: 10, right: 30, bottom: 30, left: 60 } as const;
+const ANOMALY_BUTTON_SIZE = 20;
+const ANOMALY_BUTTON_PADDING = 4;
 
 const parseTimestamp = (value?: string): number | null => {
   if (!value) {
@@ -247,6 +250,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
+  const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, { top: number; right: number }>>({});
   const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
@@ -278,7 +282,6 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       isEdited: editedPoints.has(index)
     }));
   }, [trackPoints, editedPoints]);
-
   const originalChartData = useMemo(() => {
     return gpxData.trackPoints.map((point, index) => ({
       distance: point.distance || 0,
@@ -306,6 +309,112 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const anomalyRegions = useMemo(() => {
     return allAnomalyRegions.filter((_, index) => !ignoredAnomalies.has(index));
   }, [allAnomalyRegions, ignoredAnomalies]);
+
+  useEffect(() => {
+    const container = chartContainerRef.current;
+
+    if (!container || anomalyRegions.length === 0) {
+      setAnomalyButtonOffsets({});
+      return;
+    }
+
+    let frame: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+
+    const measure = () => {
+      if (!container || anomalyRegions.length === 0) {
+        setAnomalyButtonOffsets({});
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const nextStyles: Record<number, { top: number; right: number }> = {};
+
+      anomalyRegions.forEach((_, index) => {
+        const shape = container.querySelector<SVGGraphicsElement>(
+          `.anomaly-area-${index} rect, .anomaly-area-${index} path`
+        );
+        if (!shape) {
+          return;
+        }
+
+        const rectBox = shape.getBoundingClientRect();
+        const rawRight = containerRect.right - rectBox.right + ANOMALY_BUTTON_PADDING - 14;
+
+        const clampedRight = Math.max(
+          ANOMALY_BUTTON_PADDING,
+          Math.min(
+            rawRight,
+            container.clientWidth - ANOMALY_BUTTON_SIZE - ANOMALY_BUTTON_PADDING
+          )
+        );
+
+        nextStyles[index] = { top: 0, right: clampedRight };
+      });
+
+      setAnomalyButtonOffsets(prev => {
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(nextStyles);
+
+        if (prevKeys.length !== nextKeys.length) {
+          return nextStyles;
+        }
+
+        for (const key of nextKeys) {
+          const numericKey = Number(key);
+          const prevValue = prev[numericKey];
+          const nextValue = nextStyles[numericKey];
+
+          if (!prevValue || !nextValue) {
+            return nextStyles;
+          }
+
+          if (prevValue.top !== nextValue.top || prevValue.right !== nextValue.right) {
+            return nextStyles;
+          }
+        }
+
+        return prev;
+      });
+    };
+
+    const scheduleMeasure = () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      frame = requestAnimationFrame(measure);
+    };
+
+    scheduleMeasure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => scheduleMeasure());
+      resizeObserver.observe(container);
+    }
+
+    if (typeof MutationObserver !== 'undefined') {
+      mutationObserver = new MutationObserver(() => scheduleMeasure());
+      mutationObserver.observe(container, {
+        attributes: true,
+        attributeFilter: ['transform', 'd'],
+        childList: true,
+        subtree: true
+      });
+    }
+
+    return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      if (mutationObserver) {
+        mutationObserver.disconnect();
+      }
+    };
+  }, [anomalyRegions, zoomDomain, chartData]);
 
   const handleIgnoreAnomaly = useCallback((anomalyIndex: number) => {
     setIgnoredAnomalies(prev => {
@@ -1147,7 +1256,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
             <div className="select-none relative">
               {/* Zoom controls overlay - left top */}
-              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: '80px', top: '15px', background: 'white' }}>
+              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: '127px', top: '15px', background: 'white' }}>
                 <Button variant="ghost" size="icon" onClick={zoomIn} title="Zoom in" className="h-8 w-8 hover:bg-slate-100">
                   <ZoomIn className="h-4 w-4" />
                 </Button>
@@ -1178,19 +1287,10 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 {anomalyRegions.length > 0 && chartContainerRef.current && (
                   <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
                     {anomalyRegions.map((region, index) => {
-                      const totalDistance = stats.totalDistance;
-                      const domain = zoomDomain || [0, totalDistance];
-
-                      // Calculate position at the end (right side) of anomaly region
-                      const regionEndPercent = ((region.endDistance - domain[0]) / (domain[1] - domain[0])) * 100;
-
-                      // Only show if end is within visible range
-                      if (regionEndPercent < 0 || regionEndPercent > 100) return null;
-
-                      // Chart margins: left=60px, right=30px, total=90px
-                      const chartLeftMargin = 60;
-                      const chartRightMargin = 30;
-                      const chartMarginTotal = chartLeftMargin + chartRightMargin;
+                      const offsets = anomalyButtonOffsets[index];
+                      if (!offsets) {
+                        return null;
+                      }
 
                       return (
                         <button
@@ -1200,8 +1300,8 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                           onMouseLeave={() => setHoveredAnomalyIndex(null)}
                           className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
                           style={{
-                            left: `calc(${chartLeftMargin}px + (100% - ${chartMarginTotal}px) * ${regionEndPercent / 100})`,
-                            top: '5px',
+                            top: 0,
+                            right: offsets.right
                           }}
                           title="Ignore this anomaly"
                         >
@@ -1214,7 +1314,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
                     data={chartData}
-                    margin={{ top: 10, right: 30, bottom: 30, left: 60 }}
+                    margin={CHART_MARGINS}
                     onMouseDown={handleChartMouseDown}
                     onMouseMove={handleChartMouseMove}
                     onMouseUp={handleChartMouseUp}
@@ -1272,6 +1372,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                       return (
                         <ReferenceArea
                           key={`anomaly-${index}`}
+                          className={`anomaly-area anomaly-area-${index}`}
                           x1={region.startDistance}
                           x2={region.endDistance}
                           fill="#ff0000"
