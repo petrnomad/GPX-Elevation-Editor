@@ -251,6 +251,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
   const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, { top: number; right: number }>>({});
+  const [showHelpCard, setShowHelpCard] = useState(true);
   const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
@@ -1093,23 +1094,34 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       </div>
 
       {/* Help Card */}
-      <Card className="bg-blue-50 border-blue-200">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-blue-800">
-              <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Neighbouring samples adjust using the radius and intensity below. Click without dragging to apply a quick local smoothing.
-              {stats.editedCount > 0 && (
-                <span className="ml-2">
-                  <Badge className="bg-amber-100 text-amber-800 border-transparent">
-                    {stats.editedCount} points modified
-                  </Badge>
-                </span>
-              )}
+      {showHelpCard && (
+        <Card className="bg-blue-50 border-blue-200 relative">
+          <CardContent className="p-4">
+            <button
+              type="button"
+              aria-label="Dismiss editing help"
+              onClick={() => setShowHelpCard(false)}
+              className="absolute top-2 right-2 text-blue-500 transition-colors hover:bg-blue-500 hover:text-white rounded-full border border-blue-200"
+              style={{ margin: '5px', padding: '0px 6px' }}
+            >
+              ×
+            </button>
+            <div className="flex items-start gap-3 pr-6">
+              <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-blue-800">
+                <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Nearby samples follow according to the smoothing radius and intensity sliders. Clicking once without dragging runs the click-smoothing blend with your current settings.
+                {stats.editedCount > 0 && (
+                  <span className="ml-2">
+                    <Badge className="bg-amber-100 text-amber-800 border-transparent">
+                      {stats.editedCount} points modified
+                    </Badge>
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Smoothing Controls */}
       <Card>
@@ -1159,18 +1171,19 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600">
-                  Anomaly detection threshold
+                  Anomaly detection threshold (1-50 m)
                 </Label>
                 <span className="text-sm text-slate-600">{anomalyThreshold} m</span>
               </div>
               <Slider
                 id="anomaly-threshold"
-                min={5}
-                max={30}
+                min={1}
+                max={50}
                 step={1}
                 value={[anomalyThreshold]}
                 onValueChange={(value: number[]) => {
-                  setAnomalyThreshold(value[0] ?? 10);
+                  const nextValue = value[0] ?? anomalyThreshold;
+                  setAnomalyThreshold(Math.min(Math.max(nextValue, 1), 50));
                 }}
               />
             </div>
@@ -1189,7 +1202,10 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           <div className="flex items-center gap-2">
             <CardTitle>Elevation Profile</CardTitle>
             {anomalyRegions.length > 0 && (
-              <Badge className="bg-red-100 text-red-800 border-transparent">
+              <Badge
+                variant="outline"
+                className="bg-red-100 text-red-800 border-transparent hover:bg-red-100 pointer-events-none"
+              >
                 {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
               </Badge>
             )}
