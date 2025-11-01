@@ -1,14 +1,24 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Download, RotateCcw, Info, Undo2, Eye, EyeOff } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon } from 'lucide-react';
+import { Button, type ButtonProps } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
 import { GPXData, TrackPoint, exportGPX } from '@/lib/gpx-parser';
+const ElevationMap = dynamic<{ points: Array<{ lat: number; lon: number }> }>(
+  () => import('@/components/elevation-map').then(mod => mod.ElevationMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-96 w-full rounded-md bg-slate-100 animate-pulse" aria-label="Loading map" />
+    )
+  }
+);
 
 interface ElevationEditorProps {
   gpxData: GPXData;
@@ -24,7 +34,57 @@ interface ChartDataPoint {
 }
 
 const HISTORY_LIMIT = 100;
-const ELEVATION_NOISE_THRESHOLD = 1.5; // ignore sub-meter jitter when aggregating gain/loss
+const ELEVATION_STEP_THRESHOLD = 2.5; // ignore sub-threshold steps when aggregating gain/loss
+const MEDIAN_WINDOW_SIZE = 3; // 3-point rolling median (one neighbour each side)
+
+const parseTimestamp = (value?: string): number | null => {
+  if (!value) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+};
+
+const formatDuration = (milliseconds: number): string => {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return '—';
+  }
+
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds
+      .toString()
+      .padStart(2, '0')}s`;
+  }
+
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+};
+
+const computeRollingMedian = (values: number[], windowSize: number): number[] => {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const oddWindow = Math.max(1, windowSize % 2 === 0 ? windowSize + 1 : windowSize);
+  const halfWindow = Math.floor(oddWindow / 2);
+
+  return values.map((_, index) => {
+    const start = Math.max(0, index - halfWindow);
+    const end = Math.min(values.length - 1, index + halfWindow);
+    const windowValues = values.slice(start, end + 1).slice().sort((a, b) => a - b);
+    const mid = Math.floor(windowValues.length / 2);
+
+    if (windowValues.length % 2 === 0) {
+      return (windowValues[mid - 1] + windowValues[mid]) / 2;
+    }
+
+    return windowValues[mid];
+  });
+};
 
 export function ElevationEditor({ gpxData, originalContent, filename }: ElevationEditorProps) {
   const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(gpxData.trackPoints);
@@ -45,12 +105,17 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     }[]
   >([]);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [showMap, setShowMap] = useState(false);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
   );
   const canUndo = history.length > 0;
+  const metricVariant: ButtonProps['variant'] = unitSystem === 'metric' ? 'default' : 'ghost';
+  const imperialVariant: ButtonProps['variant'] = unitSystem === 'imperial' ? 'default' : 'ghost';
+  const ghostVariant: ButtonProps['variant'] = 'ghost';
+  const outlineVariant: ButtonProps['variant'] = 'outline';
 
   useEffect(() => {
     setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
@@ -80,6 +145,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const distanceUnitLabel = unitSystem === 'metric' ? 'km' : 'mi';
   const elevationUnitLabel = unitSystem === 'metric' ? 'm' : 'ft';
+  const speedUnitLabel = unitSystem === 'metric' ? 'km/h' : 'mph';
 
   const convertDistance = useCallback(
     (meters: number) => {
@@ -97,6 +163,16 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
         return meters;
       }
       return meters * 3.28084;
+    },
+    [unitSystem]
+  );
+
+  const convertSpeed = useCallback(
+    (metersPerSecond: number) => {
+      if (unitSystem === 'metric') {
+        return metersPerSecond * 3.6;
+      }
+      return metersPerSecond * 2.23693629;
     },
     [unitSystem]
   );
@@ -223,14 +299,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const stats = useMemo(() => {
     console.log('Calculating stats for', trackPoints.length, 'points');
-    const smoothingRadius = 2; // 5-point moving average to dampen GPS noise
-    const smoothedElevations = trackPoints.map((point, index) => {
-      const start = Math.max(0, index - smoothingRadius);
-      const end = Math.min(trackPoints.length - 1, index + smoothingRadius);
-      const window = trackPoints.slice(start, end + 1);
-      const sum = window.reduce((total, p) => total + p.ele, 0);
-      return sum / window.length;
-    });
+    const rawElevations = trackPoints.map(point => point.ele);
+    const smoothedElevations = computeRollingMedian(rawElevations, MEDIAN_WINDOW_SIZE);
 
     const minEle = Math.min(...smoothedElevations);
     const maxEle = Math.max(...smoothedElevations);
@@ -240,7 +310,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           return acc;
         }
         const diff = elevation - smoothedElevations[index - 1];
-        if (Math.abs(diff) < ELEVATION_NOISE_THRESHOLD) {
+        if (Math.abs(diff) < ELEVATION_STEP_THRESHOLD) {
           return acc;
         }
         if (diff > 0) {
@@ -253,13 +323,65 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       { ascent: 0, descent: 0 }
     );
 
+    let startTime: number | null = null;
+    let endTime: number | null = null;
+    let totalDurationSeconds = 0;
+    let maxSpeed = 0;
+    let distanceForSpeed = 0;
+
+    trackPoints.forEach((point, index) => {
+      const currentTime = parseTimestamp(point.time);
+      if (currentTime === null) {
+        return;
+      }
+
+      if (startTime === null) {
+        startTime = currentTime;
+      }
+      endTime = currentTime;
+
+      if (index === 0) {
+        return;
+      }
+
+      const prevPoint = trackPoints[index - 1];
+      const prevTime = parseTimestamp(prevPoint.time);
+      if (prevTime === null) {
+        return;
+      }
+
+      const deltaSeconds = (currentTime - prevTime) / 1000;
+      if (deltaSeconds <= 0) {
+        return;
+      }
+
+      const prevDistance = prevPoint.distance ?? 0;
+      const currentDistance = point.distance ?? prevDistance;
+      const deltaDistance = Math.max(0, currentDistance - prevDistance);
+      distanceForSpeed += deltaDistance;
+
+      const speed = deltaDistance / deltaSeconds;
+      if (speed > maxSpeed) {
+        maxSpeed = speed;
+      }
+
+      totalDurationSeconds += deltaSeconds;
+    });
+
+    const totalDurationMs = totalDurationSeconds * 1000;
+    const averageSpeed = totalDurationSeconds > 0 ? distanceForSpeed / totalDurationSeconds : null;
+    const maxSegmentSpeed = maxSpeed > 0 ? maxSpeed : null;
+
     return {
       minElevation: minEle,
       maxElevation: maxEle,
       totalAscent: totals.ascent,
       totalDescent: totals.descent,
       totalDistance: gpxData.totalDistance,
-      editedCount: editedPoints.size
+      editedCount: editedPoints.size,
+      totalDurationMs,
+      averageSpeed,
+      maxSpeed: maxSegmentSpeed
     };
   }, [trackPoints, gpxData.totalDistance, editedPoints]);
 
@@ -444,7 +566,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           <p className="text-slate-600 mt-1">{filename}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleUndo} disabled={!canUndo}>
+          <Button variant={outlineVariant} onClick={handleUndo} disabled={!canUndo}>
             <Undo2 className="h-4 w-4 mr-2" />
             Undo
           </Button>
@@ -460,7 +582,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
         <Card className="p-4">
           <div className="text-sm text-slate-600">Distance</div>
           <div className="text-lg font-bold">
@@ -468,13 +590,13 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           </div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-slate-600">Min Elevation</div>
+          <div className="text-sm text-slate-600">Lowest Point</div>
           <div className="text-lg font-bold">
             {Math.round(convertElevation(stats.minElevation))} {elevationUnitLabel}
           </div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-slate-600">Max Elevation</div>
+          <div className="text-sm text-slate-600">Highest Point</div>
           <div className="text-lg font-bold">
             {Math.round(convertElevation(stats.maxElevation))} {elevationUnitLabel}
           </div>
@@ -494,6 +616,30 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
         <Card className="p-4">
           <div className="text-sm text-slate-600">Edited Points</div>
           <div className="text-lg font-bold text-amber-600">{stats.editedCount}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-slate-600">Total Time</div>
+          <div className="text-lg font-bold">
+            {stats.totalDurationMs && stats.totalDurationMs > 0
+              ? formatDuration(stats.totalDurationMs)
+              : '—'}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-slate-600">Avg Speed</div>
+          <div className="text-lg font-bold">
+            {stats.averageSpeed != null
+              ? `${convertSpeed(stats.averageSpeed).toFixed(1)} ${speedUnitLabel}`
+              : '—'}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-slate-600">Max Speed</div>
+          <div className="text-lg font-bold">
+            {stats.maxSpeed != null
+              ? `${convertSpeed(stats.maxSpeed).toFixed(1)} ${speedUnitLabel}`
+              : '—'}
+          </div>
         </Card>
       </div>
 
@@ -521,44 +667,46 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
         <CardHeader>
           <CardTitle>Smoothing Controls</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
-                Affected points (each side)
-              </Label>
-              <span className="text-sm text-slate-600">{Math.round(smoothingRadius)} pts</span>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
+                  Affected points (each side)
+                </Label>
+                <span className="text-sm text-slate-600">{Math.round(smoothingRadius)} pts</span>
+              </div>
+              <Slider
+                id="smoothing-radius"
+                min={0}
+                max={Math.max(0, maxSmoothingRadius)}
+                step={1}
+                value={[Math.max(0, Math.min(Math.round(smoothingRadius), maxSmoothingRadius))]}
+                onValueChange={(value: number[]) => {
+                  const raw = value[0] ?? 0;
+                  setSmoothingRadius(Math.max(0, Math.min(raw, maxSmoothingRadius)));
+                }}
+              />
             </div>
-            <Slider
-              id="smoothing-radius"
-              min={0}
-              max={Math.max(0, maxSmoothingRadius)}
-              step={1}
-              value={[Math.max(0, Math.min(Math.round(smoothingRadius), maxSmoothingRadius))]}
-              onValueChange={value => {
-                const raw = value[0] ?? 0;
-                setSmoothingRadius(Math.max(0, Math.min(raw, maxSmoothingRadius)));
-              }}
-            />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="smoothing-strength" className="text-sm text-slate-600">
-                Smoothing intensity
-              </Label>
-              <span className="text-sm text-slate-600">{Math.round(smoothingStrength * 100)}%</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="smoothing-strength" className="text-sm text-slate-600">
+                  Smoothing intensity
+                </Label>
+                <span className="text-sm text-slate-600">{Math.round(smoothingStrength * 100)}%</span>
+              </div>
+              <Slider
+                id="smoothing-strength"
+                min={0}
+                max={100}
+                step={5}
+                value={[Math.round(smoothingStrength * 100)]}
+                onValueChange={(value: number[]) => {
+                  const next = (value[0] ?? 0) / 100;
+                  setSmoothingStrength(Math.min(Math.max(next, 0), 1));
+                }}
+              />
             </div>
-            <Slider
-              id="smoothing-strength"
-              min={0}
-              max={100}
-              step={5}
-              value={[Math.round(smoothingStrength * 100)]}
-              onValueChange={value => {
-                const next = (value[0] ?? 0) / 100;
-                setSmoothingStrength(Math.min(Math.max(next, 0), 1));
-              }}
-            />
           </div>
           <p className="text-xs text-slate-500">
             Dragging uses these settings to blend the selected point with its neighbours. Clicking without
@@ -575,7 +723,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
             <div className="flex overflow-hidden rounded-md border border-slate-200">
               <Button
                 type="button"
-                variant={unitSystem === 'metric' ? 'default' : 'ghost'}
+                variant={metricVariant}
                 size="sm"
                 className="rounded-none"
                 onClick={() => setUnitSystem('metric')}
@@ -584,7 +732,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </Button>
               <Button
                 type="button"
-                variant={unitSystem === 'imperial' ? 'default' : 'ghost'}
+                variant={imperialVariant}
                 size="sm"
                 className="rounded-none"
                 onClick={() => setUnitSystem('imperial')}
@@ -593,7 +741,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </Button>
             </div>
             <Button
-              variant="ghost"
+              variant={ghostVariant}
               size="sm"
               className="text-slate-600 hover:text-slate-800"
               onClick={() => setShowOriginal(prev => !prev)}
@@ -610,100 +758,121 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                 </>
               )}
             </Button>
+            <Button
+              variant={ghostVariant}
+              size="sm"
+              className="text-slate-600 hover:text-slate-800"
+              onClick={() => setShowMap(prev => !prev)}
+            >
+              <MapIcon className="h-4 w-4 mr-2" />
+              {showMap ? 'Hide map' : 'Show path on map'}
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="h-96 w-full select-none">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={chartData}
-                onMouseDown={handleChartMouseDown}
-                onMouseMove={handleChartMouseMove}
-                onMouseUp={handleChartMouseUp}
-                onMouseLeave={handleChartMouseLeave}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis 
-                  dataKey="distance"
-                  type="number"
-                  domain={[0, 'dataMax']}
-                  tickCount={25}
-                  interval="preserveStartEnd"
-                  tickFormatter={(value) => {
-                    const distance = convertDistance(value);
-                    return distance >= 10 ? distance.toFixed(0) : distance.toFixed(1);
-                  }}
-                  stroke="#64748b"
-                />
-                <YAxis 
-                  tickFormatter={(value) => {
-                    const elevation = convertElevation(value);
-                    return `${Math.round(elevation)}${elevationUnitLabel}`;
-                  }}
-                  stroke="#64748b"
-                />
-                <Tooltip
-                  formatter={(value: number, name: string) => {
-                    const numericValue = typeof value === 'number' ? value : Number(value);
-                    const formatted = convertElevation(numericValue);
-                    const displayName = name === 'Original' ? 'Original' : 'Edited';
-                    return [`${formatted.toFixed(1)} ${elevationUnitLabel}`, displayName];
-                  }}
-                  labelFormatter={(value: number) => {
-                    const numericValue = typeof value === 'number' ? value : Number(value);
-                    const formattedDistance = convertDistance(numericValue);
-                    return `Distance: ${formattedDistance.toFixed(2)} ${distanceUnitLabel}`;
-                  }}
-                  contentStyle={{
-                    backgroundColor: 'white',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="elevation"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={false}
-                  name="Edited"
-                  activeDot={{ 
-                    r: 6, 
-                    fill: '#f59e0b',
-                    stroke: '#ffffff',
-                    strokeWidth: 2,
-                    cursor: 'ns-resize'
-                  }}
-                />
-                {showOriginal && (
-                  <Line
-                    type="monotone"
-                    data={originalChartData}
-                    dataKey="elevation"
-                    stroke="#94a3b8"
-                    strokeWidth={1.5}
-                    dot={false}
-                    isAnimationActive={false}
-                    strokeDasharray="4 4"
-                    name="Original"
-                  />
-                )}
-                {/* Reference lines for edited points */}
-                {Array.from(editedPoints).slice(0, 5).map(index => (
-                  <ReferenceLine
-                    key={index}
-                    x={trackPoints[index]?.distance || 0}
-                    stroke="#f59e0b"
-                    strokeDasharray="2 2"
-                    strokeOpacity={0.5}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 text-center text-xs text-slate-500">
-            Distance ({distanceUnitLabel})
+          <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
+            <div className="select-none">
+              <div className="h-96 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={chartData}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={handleChartMouseLeave}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis 
+                      dataKey="distance"
+                      type="number"
+                      domain={[0, 'dataMax']}
+                      tickCount={6}
+                      interval="preserveStartEnd"
+                      tickFormatter={(value) => {
+                        const distance = convertDistance(value);
+                        return distance >= 10 ? distance.toFixed(0) : distance.toFixed(1);
+                      }}
+                      stroke="#64748b"
+                    />
+                    <YAxis 
+                      tickFormatter={(value) => {
+                        const elevation = convertElevation(value);
+                        return `${Math.round(elevation)}${elevationUnitLabel}`;
+                      }}
+                      stroke="#64748b"
+                    />
+                    <Tooltip
+                      formatter={(value: number, name: string) => {
+                        const numericValue = typeof value === 'number' ? value : Number(value);
+                        const formatted = convertElevation(numericValue);
+                        const displayName = name === 'Original' ? 'Original' : 'Edited';
+                        return [`${formatted.toFixed(1)} ${elevationUnitLabel}`, displayName];
+                      }}
+                      labelFormatter={(value: number) => {
+                        const numericValue = typeof value === 'number' ? value : Number(value);
+                        const formattedDistance = convertDistance(numericValue);
+                        return `Distance: ${formattedDistance.toFixed(2)} ${distanceUnitLabel}`;
+                      }}
+                      contentStyle={{
+                        backgroundColor: 'white',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="elevation"
+                      stroke="#2563eb"
+                      strokeWidth={2}
+                      dot={false}
+                      name="Edited"
+                      activeDot={{ 
+                        r: 6, 
+                        fill: '#f59e0b',
+                        stroke: '#ffffff',
+                        strokeWidth: 2,
+                        cursor: 'ns-resize'
+                      }}
+                    />
+                    {showOriginal && (
+                      <Line
+                        type="monotone"
+                        data={originalChartData}
+                        dataKey="elevation"
+                        stroke="#94a3b8"
+                        strokeWidth={1.5}
+                        dot={false}
+                        isAnimationActive={false}
+                        strokeDasharray="4 4"
+                        name="Original"
+                      />
+                    )}
+                    {/* Reference lines for edited points */}
+                    {Array.from(editedPoints).slice(0, 5).map(index => (
+                      <ReferenceLine
+                        key={index}
+                        x={trackPoints[index]?.distance || 0}
+                        stroke="#f59e0b"
+                        strokeDasharray="2 2"
+                        strokeOpacity={0.5}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-2 text-center text-xs text-slate-500">
+                Distance ({distanceUnitLabel})
+              </div>
+            </div>
+            {showMap && (
+              <div className="flex flex-col gap-2">
+                <ElevationMap points={trackPoints} />
+                <div className="text-center text-xs text-slate-500">
+                  Map data © OpenStreetMap contributors
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
