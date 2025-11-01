@@ -244,12 +244,14 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
   const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
   );
   const canUndo = history.length > 0;
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
@@ -284,7 +286,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   }, [gpxData.trackPoints]);
 
   // Detect elevation anomalies
-  const anomalyRegions = useMemo(() => {
+  const allAnomalyRegions = useMemo(() => {
     const regions = detectElevationAnomalies(trackPoints);
     console.log('Detected anomaly regions:', regions);
     console.log('Total track points:', trackPoints.length);
@@ -297,6 +299,29 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
     }
     return regions;
   }, [trackPoints]);
+
+  // Filter out ignored anomalies
+  const anomalyRegions = useMemo(() => {
+    return allAnomalyRegions.filter((_, index) => !ignoredAnomalies.has(index));
+  }, [allAnomalyRegions, ignoredAnomalies]);
+
+  const handleIgnoreAnomaly = useCallback((anomalyIndex: number) => {
+    setIgnoredAnomalies(prev => {
+      const next = new Set(prev);
+      // Find the actual index in allAnomalyRegions
+      let currentVisibleIndex = 0;
+      for (let i = 0; i < allAnomalyRegions.length; i++) {
+        if (!prev.has(i)) {
+          if (currentVisibleIndex === anomalyIndex) {
+            next.add(i);
+            break;
+          }
+          currentVisibleIndex++;
+        }
+      }
+      return next;
+    });
+  }, [allAnomalyRegions]);
 
   const distanceUnitLabel = unitSystem === 'metric' ? 'km' : 'mi';
   const elevationUnitLabel = unitSystem === 'metric' ? 'm' : 'ft';
@@ -963,16 +988,9 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-800">
               <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Neighbouring samples adjust using the radius and intensity below. Click without dragging to apply a quick local smoothing.
-              {anomalyRegions.length > 0 && (
-                <span className="ml-2">
-                  <Badge variant="secondary" className="bg-red-100 text-red-800">
-                    {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
-                  </Badge>
-                </span>
-              )}
               {stats.editedCount > 0 && (
                 <span className="ml-2">
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-800">
+                  <Badge className="bg-amber-100 text-amber-800 border-transparent">
                     {stats.editedCount} points modified
                   </Badge>
                 </span>
@@ -985,14 +1003,14 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       {/* Smoothing Controls */}
       <Card>
         <CardHeader>
-          <CardTitle>Smoothing Controls</CardTitle>
+          <CardTitle>Controls</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
-                  Affected points (each side)
+                  Smoothing affected points (each side)
                 </Label>
                 <span className="text-sm text-slate-600">{Math.round(smoothingRadius)} pts</span>
               </div>
@@ -1038,7 +1056,14 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       {/* Elevation Chart */}
       <Card>
         <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <CardTitle>Elevation Profile</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle>Elevation Profile</CardTitle>
+            {anomalyRegions.length > 0 && (
+              <Badge className="bg-red-100 text-red-800 border-transparent">
+                {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
+              </Badge>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <div className="flex overflow-hidden rounded-md border border-slate-200">
               <Button
@@ -1127,7 +1152,37 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 </div>
               )}
 
-              <div className="h-96 w-full" style={{ minHeight: '384px' }}>
+              <div className="h-96 w-full relative" style={{ minHeight: '384px' }} ref={chartContainerRef}>
+                {/* Anomaly close buttons overlay */}
+                {anomalyRegions.length > 0 && chartContainerRef.current && (
+                  <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
+                    {anomalyRegions.map((region, index) => {
+                      const totalDistance = stats.totalDistance;
+                      const domain = zoomDomain || [0, totalDistance];
+
+                      // Calculate position as percentage (place at the end of anomaly region)
+                      const leftPercent = ((region.endDistance - domain[0]) / (domain[1] - domain[0])) * 100;
+
+                      // Only show if within visible range
+                      if (leftPercent < 0 || leftPercent > 100) return null;
+
+                      return (
+                        <button
+                          key={`close-${index}`}
+                          onClick={() => handleIgnoreAnomaly(index)}
+                          className="absolute pointer-events-auto bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
+                          style={{
+                            left: `calc(${leftPercent}% + 12px)`,
+                            top: '-4px',
+                          }}
+                          title="Ignore this anomaly"
+                        >
+                          ×
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
                     data={chartData}
