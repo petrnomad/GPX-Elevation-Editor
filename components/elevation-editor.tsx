@@ -106,6 +106,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   >([]);
   const [showOriginal, setShowOriginal] = useState(false);
   const [showMap, setShowMap] = useState(false);
+  const [mapKey, setMapKey] = useState(0);
+  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
@@ -412,6 +414,12 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const handleChartMouseMove = useCallback(
     (e: any) => {
+      // Track hovered point for map marker (even when not dragging)
+      const activePoint = e?.activePayload?.[0]?.payload;
+      if (activePoint && typeof activePoint.originalIndex === 'number') {
+        setHoveredPointIndex(activePoint.originalIndex);
+      }
+
       if (!dragState || !e || typeof e.chartY !== 'number') {
         return;
       }
@@ -528,6 +536,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const handleChartMouseLeave = useCallback(() => {
     completeDrag(false);
+    setHoveredPointIndex(null);
   }, [completeDrag]);
 
   const resetElevation = useCallback(() => {
@@ -762,7 +771,15 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               variant={ghostVariant}
               size="sm"
               className="text-slate-600 hover:text-slate-800"
-              onClick={() => setShowMap(prev => !prev)}
+              onClick={() => {
+                setShowMap(prev => {
+                  if (!prev) {
+                    // When showing the map, increment the key to force a fresh instance
+                    setMapKey(k => k + 1);
+                  }
+                  return !prev;
+                });
+              }}
             >
               <MapIcon className="h-4 w-4 mr-2" />
               {showMap ? 'Hide map' : 'Show path on map'}
@@ -866,8 +883,12 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </div>
             </div>
             {showMap && (
-              <div className="flex flex-col gap-2">
-                <ElevationMap points={trackPoints} />
+              <div className="flex flex-col gap-2" key={`map-container-${mapKey}`}>
+                <ElevationMap
+                  key={`elevation-map-${mapKey}`}
+                  points={trackPoints}
+                  hoveredPointIndex={hoveredPointIndex}
+                />
                 <div className="text-center text-xs text-slate-500">
                   Map data © OpenStreetMap contributors
                 </div>
