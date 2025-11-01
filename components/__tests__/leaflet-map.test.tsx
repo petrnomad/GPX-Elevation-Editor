@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import { LeafletMap } from '../leaflet-map';
+import { ElevationMap } from '../elevation-map';
 import { parseGPX } from '../../lib/gpx-parser';
 import fs from 'fs';
 import path from 'path';
@@ -44,15 +44,15 @@ const gpxContent = fs.readFileSync(gpxPath, 'utf-8');
 const gpxData = parseGPX(gpxContent);
 const samplePoints = gpxData.trackPoints.map(point => ({ lat: point.lat, lon: point.lon }));
 
-describe('LeafletMap', () => {
+describe('ElevationMap', () => {
   it('can unmount and mount again without Leaflet reinitialization error', () => {
     expect(samplePoints.length).toBeGreaterThan(0);
 
-    const firstRender = render(<LeafletMap points={samplePoints} />);
+    const firstRender = render(<ElevationMap points={samplePoints} />);
     expect(() => firstRender.unmount()).not.toThrow();
 
     expect(() => {
-      const secondRender = render(<LeafletMap points={samplePoints} />);
+      const secondRender = render(<ElevationMap points={samplePoints} />);
       secondRender.unmount();
     }).not.toThrow();
   });

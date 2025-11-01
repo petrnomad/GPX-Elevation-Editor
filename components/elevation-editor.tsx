@@ -3,14 +3,14 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon } from 'lucide-react';
-import { Button, type ButtonProps } from '@/components/ui/button';
+import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
 import { GPXData, TrackPoint, exportGPX } from '@/lib/gpx-parser';
-const ElevationMap = dynamic<{ points: Array<{ lat: number; lon: number }> }>(
+const ElevationMap = dynamic<{ points: Array<{ lat: number; lon: number }>; hoveredPointIndex?: number | null }>(
   () => import('@/components/elevation-map').then(mod => mod.ElevationMap),
   {
     ssr: false,
@@ -109,25 +109,20 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   const [mapKey, setMapKey] = useState(0);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
+  const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
   );
   const canUndo = history.length > 0;
-  const metricVariant: ButtonProps['variant'] = unitSystem === 'metric' ? 'default' : 'ghost';
-  const imperialVariant: ButtonProps['variant'] = unitSystem === 'imperial' ? 'default' : 'ghost';
-  const ghostVariant: ButtonProps['variant'] = 'ghost';
-  const outlineVariant: ButtonProps['variant'] = 'outline';
 
   useEffect(() => {
     setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
   }, [maxSmoothingRadius]);
 
-  console.log('ElevationEditor rendered with', trackPoints.length, 'points');
 
   // Convert track points to chart data
   const chartData: ChartDataPoint[] = useMemo(() => {
-    console.log('Converting track points to chart data');
     return trackPoints.map((point, index) => ({
       distance: point.distance || 0,
       elevation: point.ele,
@@ -137,7 +132,6 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   }, [trackPoints, editedPoints]);
 
   const originalChartData = useMemo(() => {
-    console.log('Preparing original chart data');
     return gpxData.trackPoints.map((point, index) => ({
       distance: point.distance || 0,
       elevation: point.ele,
@@ -389,7 +383,10 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const handleChartMouseDown = useCallback((e: any) => {
     const activePoint = e?.activePayload?.[0]?.payload;
-    if (!activePoint) return;
+
+    if (!activePoint) {
+      return;
+    }
 
     const targetIndex = activePoint.originalIndex;
     if (typeof targetIndex !== 'number' || targetIndex < 0 || targetIndex >= trackPoints.length) {
@@ -539,8 +536,80 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     setHoveredPointIndex(null);
   }, [completeDrag]);
 
+  const zoomIn = useCallback(() => {
+    const currentDomain = zoomDomain || [0, stats.totalDistance];
+    const [domainMin, domainMax] = currentDomain;
+    const domainRange = domainMax - domainMin;
+    const newRange = domainRange * 0.9; // Zoom in (90% of current range)
+
+    const center = (domainMin + domainMax) / 2;
+    const newMin = Math.max(0, center - newRange / 2);
+    const newMax = Math.min(stats.totalDistance, center + newRange / 2);
+
+    if (newMax - newMin > stats.totalDistance * 0.05) {
+      setZoomDomain([newMin, newMax]);
+    }
+  }, [zoomDomain, stats.totalDistance]);
+
+  const zoomOut = useCallback(() => {
+    const currentDomain = zoomDomain || [0, stats.totalDistance];
+    const [domainMin, domainMax] = currentDomain;
+    const domainRange = domainMax - domainMin;
+    const newRange = domainRange * 1.1; // Zoom out (110% of current range)
+
+    const center = (domainMin + domainMax) / 2;
+    const newMin = Math.max(0, center - newRange / 2);
+    const newMax = Math.min(stats.totalDistance, center + newRange / 2);
+
+    // Don't allow zooming out beyond original view
+    if (newMax - newMin >= stats.totalDistance) {
+      setZoomDomain(null);
+    } else {
+      setZoomDomain([newMin, newMax]);
+    }
+  }, [zoomDomain, stats.totalDistance]);
+
+  const resetZoom = useCallback(() => {
+    setZoomDomain(null);
+  }, []);
+
+  const panLeft = useCallback(() => {
+    if (!zoomDomain) return;
+    const [domainMin, domainMax] = zoomDomain;
+    const domainRange = domainMax - domainMin;
+    const panAmount = domainRange * 0.2; // Pan by 20% of visible range
+
+    let newMin = domainMin - panAmount;
+    let newMax = domainMax - panAmount;
+
+    // Prevent over-panning
+    if (newMin < 0) {
+      newMin = 0;
+      newMax = domainRange;
+    }
+
+    setZoomDomain([newMin, newMax]);
+  }, [zoomDomain]);
+
+  const panRight = useCallback(() => {
+    if (!zoomDomain) return;
+    const [domainMin, domainMax] = zoomDomain;
+    const domainRange = domainMax - domainMin;
+    const panAmount = domainRange * 0.2; // Pan by 20% of visible range
+
+    let newMin = domainMin + panAmount;
+    let newMax = domainMax + panAmount;
+
+    // Prevent over-panning
+    if (newMax > stats.totalDistance) {
+      newMax = stats.totalDistance;
+      newMin = stats.totalDistance - domainRange;
+    }
+
+    setZoomDomain([newMin, newMax]);
+  }, [zoomDomain, stats.totalDistance]);
+
   const resetElevation = useCallback(() => {
-    console.log('Resetting elevation to original');
     if (editedPoints.size > 0) {
       pushHistory();
     }
@@ -551,7 +620,6 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   }, [gpxData.trackPoints, editedPoints, pushHistory]);
 
   const downloadModifiedGPX = useCallback(() => {
-    console.log('Downloading modified GPX');
     const modifiedGpxData = { ...gpxData, trackPoints };
     const gpxContent = exportGPX(modifiedGpxData, originalContent);
     
@@ -575,7 +643,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           <p className="text-slate-600 mt-1">{filename}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant={outlineVariant} onClick={handleUndo} disabled={!canUndo}>
+          <Button variant="outline" onClick={handleUndo} disabled={!canUndo}>
             <Undo2 className="h-4 w-4 mr-2" />
             Undo
           </Button>
@@ -732,7 +800,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
             <div className="flex overflow-hidden rounded-md border border-slate-200">
               <Button
                 type="button"
-                variant={metricVariant}
+                variant={unitSystem === 'metric' ? 'default' : 'ghost'}
                 size="sm"
                 className="rounded-none"
                 onClick={() => setUnitSystem('metric')}
@@ -741,7 +809,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </Button>
               <Button
                 type="button"
-                variant={imperialVariant}
+                variant={unitSystem === 'imperial' ? 'default' : 'ghost'}
                 size="sm"
                 className="rounded-none"
                 onClick={() => setUnitSystem('imperial')}
@@ -750,7 +818,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               </Button>
             </div>
             <Button
-              variant={ghostVariant}
+              variant="ghost"
               size="sm"
               className="text-slate-600 hover:text-slate-800"
               onClick={() => setShowOriginal(prev => !prev)}
@@ -768,7 +836,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
               )}
             </Button>
             <Button
-              variant={ghostVariant}
+              variant="ghost"
               size="sm"
               className="text-slate-600 hover:text-slate-800"
               onClick={() => {
@@ -788,7 +856,34 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
         </CardHeader>
         <CardContent>
           <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
-            <div className="select-none">
+            <div className="select-none relative">
+              {/* Zoom controls overlay - left top */}
+              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: '80px', top: '15px', background: 'white' }}>
+                <Button variant="ghost" size="icon" onClick={zoomIn} title="Zoom in" className="h-8 w-8 hover:bg-slate-100">
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={zoomOut} title="Zoom out" className="h-8 w-8 hover:bg-slate-100">
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
+                {zoomDomain && (
+                  <Button variant="ghost" size="icon" onClick={resetZoom} title="Reset zoom" className="h-8 w-8 hover:bg-slate-100">
+                    <RotateCcw className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+
+              {/* Pan controls overlay - right top */}
+              {zoomDomain && (
+                <div className="absolute top-4 right-4 z-10 flex gap-1 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-md p-1 shadow-lg">
+                  <Button variant="ghost" size="icon" onClick={panLeft} title="Pan left" className="h-8 w-8 hover:bg-slate-100">
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={panRight} title="Pan right" className="h-8 w-8 hover:bg-slate-100">
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+
               <div className="h-96 w-full" style={{ minHeight: '384px' }}>
                 <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
@@ -799,10 +894,11 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                     onMouseLeave={handleChartMouseLeave}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis 
+                    <XAxis
                       dataKey="distance"
                       type="number"
-                      domain={[0, 'dataMax']}
+                      domain={zoomDomain || [0, 'dataMax']}
+                      allowDataOverflow={true}
                       tickCount={6}
                       interval="preserveStartEnd"
                       tickFormatter={(value) => {
@@ -811,7 +907,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                       }}
                       stroke="#64748b"
                     />
-                    <YAxis 
+                    <YAxis
+                      allowDataOverflow={true}
                       tickFormatter={(value) => {
                         const elevation = convertElevation(value);
                         return `${Math.round(elevation)}${elevationUnitLabel}`;
@@ -844,8 +941,9 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                       strokeWidth={2}
                       dot={false}
                       name="Edited"
-                      activeDot={{ 
-                        r: 6, 
+                      isAnimationActive={false}
+                      activeDot={{
+                        r: 6,
                         fill: '#f59e0b',
                         stroke: '#ffffff',
                         strokeWidth: 2,
@@ -893,9 +991,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                   points={trackPoints}
                   hoveredPointIndex={hoveredPointIndex}
                 />
-                <div className="text-center text-xs text-slate-500">
-                  Map data © OpenStreetMap contributors
-                </div>
+               
               </div>
             )}
           </div>
