@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Download, RotateCcw, Info, Undo2 } from 'lucide-react';
+import { Download, RotateCcw, Info, Undo2, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,7 @@ interface ChartDataPoint {
 }
 
 const HISTORY_LIMIT = 100;
+const ELEVATION_NOISE_THRESHOLD = 1.5; // ignore sub-meter jitter when aggregating gain/loss
 
 export function ElevationEditor({ gpxData, originalContent, filename }: ElevationEditorProps) {
   const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(gpxData.trackPoints);
@@ -43,6 +44,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       editedIndices: number[];
     }[]
   >([]);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
@@ -65,6 +68,38 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       isEdited: editedPoints.has(index)
     }));
   }, [trackPoints, editedPoints]);
+
+  const originalChartData = useMemo(() => {
+    console.log('Preparing original chart data');
+    return gpxData.trackPoints.map((point, index) => ({
+      distance: point.distance || 0,
+      elevation: point.ele,
+      originalIndex: index
+    }));
+  }, [gpxData.trackPoints]);
+
+  const distanceUnitLabel = unitSystem === 'metric' ? 'km' : 'mi';
+  const elevationUnitLabel = unitSystem === 'metric' ? 'm' : 'ft';
+
+  const convertDistance = useCallback(
+    (meters: number) => {
+      if (unitSystem === 'metric') {
+        return meters / 1000;
+      }
+      return meters / 1609.344;
+    },
+    [unitSystem]
+  );
+
+  const convertElevation = useCallback(
+    (meters: number) => {
+      if (unitSystem === 'metric') {
+        return meters;
+      }
+      return meters * 3.28084;
+    },
+    [unitSystem]
+  );
 
   // Smart smoothing algorithm used while dragging
   const applySmoothTransition = useCallback(
@@ -188,19 +223,41 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
   const stats = useMemo(() => {
     console.log('Calculating stats for', trackPoints.length, 'points');
-    const elevations = trackPoints.map(p => p.ele);
-    const minEle = Math.min(...elevations);
-    const maxEle = Math.max(...elevations);
-    const totalGain = trackPoints.reduce((gain, point, index) => {
-      if (index === 0) return 0;
-      const diff = point.ele - trackPoints[index - 1].ele;
-      return gain + (diff > 0 ? diff : 0);
-    }, 0);
+    const smoothingRadius = 2; // 5-point moving average to dampen GPS noise
+    const smoothedElevations = trackPoints.map((point, index) => {
+      const start = Math.max(0, index - smoothingRadius);
+      const end = Math.min(trackPoints.length - 1, index + smoothingRadius);
+      const window = trackPoints.slice(start, end + 1);
+      const sum = window.reduce((total, p) => total + p.ele, 0);
+      return sum / window.length;
+    });
+
+    const minEle = Math.min(...smoothedElevations);
+    const maxEle = Math.max(...smoothedElevations);
+    const totals = smoothedElevations.reduce(
+      (acc, elevation, index) => {
+        if (index === 0) {
+          return acc;
+        }
+        const diff = elevation - smoothedElevations[index - 1];
+        if (Math.abs(diff) < ELEVATION_NOISE_THRESHOLD) {
+          return acc;
+        }
+        if (diff > 0) {
+          acc.ascent += diff;
+        } else {
+          acc.descent += Math.abs(diff);
+        }
+        return acc;
+      },
+      { ascent: 0, descent: 0 }
+    );
 
     return {
       minElevation: minEle,
       maxElevation: maxEle,
-      totalGain: totalGain,
+      totalAscent: totals.ascent,
+      totalDescent: totals.descent,
       totalDistance: gpxData.totalDistance,
       editedCount: editedPoints.size
     };
@@ -403,22 +460,36 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <Card className="p-4">
           <div className="text-sm text-slate-600">Distance</div>
-          <div className="text-lg font-bold">{(stats.totalDistance / 1000).toFixed(1)} km</div>
+          <div className="text-lg font-bold">
+            {convertDistance(stats.totalDistance).toFixed(1)} {distanceUnitLabel}
+          </div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-slate-600">Min Elevation</div>
-          <div className="text-lg font-bold">{stats.minElevation.toFixed(0)} m</div>
+          <div className="text-lg font-bold">
+            {Math.round(convertElevation(stats.minElevation))} {elevationUnitLabel}
+          </div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-slate-600">Max Elevation</div>
-          <div className="text-lg font-bold">{stats.maxElevation.toFixed(0)} m</div>
+          <div className="text-lg font-bold">
+            {Math.round(convertElevation(stats.maxElevation))} {elevationUnitLabel}
+          </div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-slate-600">Total Gain</div>
-          <div className="text-lg font-bold">{stats.totalGain.toFixed(0)} m</div>
+          <div className="text-sm text-slate-600">Total Ascent</div>
+          <div className="text-lg font-bold">
+            {Math.round(convertElevation(stats.totalAscent))} {elevationUnitLabel}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-slate-600">Total Descent</div>
+          <div className="text-lg font-bold">
+            {Math.round(convertElevation(stats.totalDescent))} {elevationUnitLabel}
+          </div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-slate-600">Edited Points</div>
@@ -498,8 +569,48 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
 
       {/* Elevation Chart */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <CardTitle>Elevation Profile</CardTitle>
+          <div className="flex items-center gap-2">
+            <div className="flex overflow-hidden rounded-md border border-slate-200">
+              <Button
+                type="button"
+                variant={unitSystem === 'metric' ? 'default' : 'ghost'}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setUnitSystem('metric')}
+              >
+                Metric
+              </Button>
+              <Button
+                type="button"
+                variant={unitSystem === 'imperial' ? 'default' : 'ghost'}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setUnitSystem('imperial')}
+              >
+                Imperial
+              </Button>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-600 hover:text-slate-800"
+              onClick={() => setShowOriginal(prev => !prev)}
+            >
+              {showOriginal ? (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Hide original
+                </>
+              ) : (
+                <>
+                  <EyeOff className="h-4 w-4 mr-2" />
+                  Show original
+                </>
+              )}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="h-96 w-full select-none">
@@ -514,19 +625,35 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis 
                   dataKey="distance"
-                  tickFormatter={(value) => `${(value / 1000).toFixed(1)}km`}
+                  type="number"
+                  domain={[0, 'dataMax']}
+                  tickCount={25}
+                  interval="preserveStartEnd"
+                  tickFormatter={(value) => {
+                    const distance = convertDistance(value);
+                    return distance >= 10 ? distance.toFixed(0) : distance.toFixed(1);
+                  }}
                   stroke="#64748b"
                 />
                 <YAxis 
-                  tickFormatter={(value) => `${value}m`}
+                  tickFormatter={(value) => {
+                    const elevation = convertElevation(value);
+                    return `${Math.round(elevation)}${elevationUnitLabel}`;
+                  }}
                   stroke="#64748b"
                 />
                 <Tooltip
-                  formatter={(value: number, name: string) => [
-                    `${value.toFixed(1)}m`,
-                    'Elevation'
-                  ]}
-                  labelFormatter={(value: number) => `Distance: ${(value / 1000).toFixed(2)}km`}
+                  formatter={(value: number, name: string) => {
+                    const numericValue = typeof value === 'number' ? value : Number(value);
+                    const formatted = convertElevation(numericValue);
+                    const displayName = name === 'Original' ? 'Original' : 'Edited';
+                    return [`${formatted.toFixed(1)} ${elevationUnitLabel}`, displayName];
+                  }}
+                  labelFormatter={(value: number) => {
+                    const numericValue = typeof value === 'number' ? value : Number(value);
+                    const formattedDistance = convertDistance(numericValue);
+                    return `Distance: ${formattedDistance.toFixed(2)} ${distanceUnitLabel}`;
+                  }}
                   contentStyle={{
                     backgroundColor: 'white',
                     border: '1px solid #e2e8f0',
@@ -540,6 +667,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                   stroke="#2563eb"
                   strokeWidth={2}
                   dot={false}
+                  name="Edited"
                   activeDot={{ 
                     r: 6, 
                     fill: '#f59e0b',
@@ -548,6 +676,19 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                     cursor: 'ns-resize'
                   }}
                 />
+                {showOriginal && (
+                  <Line
+                    type="monotone"
+                    data={originalChartData}
+                    dataKey="elevation"
+                    stroke="#94a3b8"
+                    strokeWidth={1.5}
+                    dot={false}
+                    isAnimationActive={false}
+                    strokeDasharray="4 4"
+                    name="Original"
+                  />
+                )}
                 {/* Reference lines for edited points */}
                 {Array.from(editedPoints).slice(0, 5).map(index => (
                   <ReferenceLine
@@ -560,6 +701,9 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                 ))}
               </LineChart>
             </ResponsiveContainer>
+          </div>
+          <div className="mt-2 text-center text-xs text-slate-500">
+            Distance ({distanceUnitLabel})
           </div>
         </CardContent>
       </Card>
