@@ -35,6 +35,15 @@ export function parseGPX(gpxContent: string): GPXData {
 
   // Navigate through the GPX structure
   const gpx = gpxData.gpx;
+
+  if (!gpx) {
+    throw new Error('Invalid GPX file: No GPX root element found');
+  }
+
+  if (!gpx.trk) {
+    throw new Error('Invalid GPX file: No track data found');
+  }
+
   const tracks = Array.isArray(gpx.trk) ? gpx.trk : [gpx.trk];
 
   tracks.forEach((track: any) => {

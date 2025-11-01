@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea } from 'recharts';
+import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,7 @@ interface ElevationEditorProps {
   gpxData: GPXData;
   originalContent: string;
   filename: string;
+  onLoadNewFile?: (content: string, filename: string) => void;
 }
 
 interface ChartDataPoint {
@@ -86,7 +87,140 @@ const computeRollingMedian = (values: number[], windowSize: number): number[] =>
   });
 };
 
-export function ElevationEditor({ gpxData, originalContent, filename }: ElevationEditorProps) {
+interface AnomalyRegion {
+  startDistance: number;
+  endDistance: number;
+  severity: number;
+}
+
+const detectElevationAnomalies = (trackPoints: TrackPoint[]): AnomalyRegion[] => {
+  if (trackPoints.length < 10) {
+    console.log('Not enough points for anomaly detection:', trackPoints.length);
+    return [];
+  }
+
+  const elevations = trackPoints.map(p => p.ele);
+  const distances = trackPoints.map(p => p.distance || 0);
+
+  // Calculate elevation changes (gradient) between consecutive points
+  const gradients: number[] = [];
+  for (let i = 1; i < elevations.length; i++) {
+    const elevChange = elevations[i] - elevations[i - 1];
+    const distChange = (distances[i] - distances[i - 1]) || 1;
+    // Gradient in meters per meter
+    gradients.push(Math.abs(elevChange / distChange));
+  }
+
+  // Calculate average gradient
+  const avgGradient = gradients.reduce((sum, g) => sum + g, 0) / gradients.length;
+  const gradientThreshold = Math.max(avgGradient * 3, 0.05); // 3x average or minimum 5% grade
+
+  console.log(`Average gradient: ${(avgGradient * 100).toFixed(2)}%, threshold: ${(gradientThreshold * 100).toFixed(2)}%`);
+
+  // Also check for absolute elevation changes (detect sudden jumps)
+  const elevationChanges: number[] = [];
+  for (let i = 1; i < elevations.length; i++) {
+    elevationChanges.push(Math.abs(elevations[i] - elevations[i - 1]));
+  }
+
+  // Find steep sections - either high gradient OR large absolute elevation change
+  const isSteep: boolean[] = [false]; // First point has no gradient
+  for (let i = 0; i < gradients.length; i++) {
+    const hasHighGradient = gradients[i] > gradientThreshold;
+    const hasLargeElevationChange = elevationChanges[i] >= 10; // 10+ meters absolute change (increased from 8)
+    isSteep.push(hasHighGradient || hasLargeElevationChange);
+  }
+
+  const steepCount = isSteep.filter(s => s).length;
+  console.log(`Found ${steepCount} steep points out of ${trackPoints.length} total points`);
+
+  // Log steep points
+  isSteep.forEach((steep, i) => {
+    if (steep && i > 0) {
+      const elevChange = i - 1 < elevationChanges.length ? elevationChanges[i - 1] : 0;
+      console.log(`Steep section at index ${i}, distance: ${(distances[i] / 1000).toFixed(3)}km, elevation: ${elevations[i]}m, gradient: ${(gradients[i - 1] * 100).toFixed(2)}%, elev change: ${elevChange.toFixed(1)}m`);
+    }
+  });
+
+  // Group steep sections into anomaly regions
+  const regions: AnomalyRegion[] = [];
+  const maxGap = 5; // Allow up to 5 non-steep points between steep sections (reduced from 7)
+  let regionStart: number | null = null;
+  let regionEnd: number | null = null;
+  let maxSeverity = 0;
+  let gapCounter = 0;
+  let steepPointsInRegion = 0;
+
+  for (let i = 0; i < isSteep.length; i++) {
+    if (isSteep[i]) {
+      if (regionStart === null) {
+        // Start new region - go back to capture the full anomaly
+        regionStart = Math.max(0, i - 5);
+        regionEnd = i;
+        const severity = i > 0 ? gradients[i - 1] / gradientThreshold : 1;
+        maxSeverity = severity;
+        steepPointsInRegion = 1;
+        gapCounter = 0;
+      } else {
+        // Continue region
+        regionEnd = i;
+        const severity = i > 0 ? gradients[i - 1] / gradientThreshold : 1;
+        maxSeverity = Math.max(maxSeverity, severity);
+        steepPointsInRegion++;
+        gapCounter = 0;
+      }
+    } else if (regionStart !== null) {
+      // We're in a gap
+      gapCounter++;
+
+      if (gapCounter > maxGap) {
+        // Gap too large, end the region - extend forward to capture the full anomaly
+        regionEnd = Math.min(trackPoints.length - 1, regionEnd! + 3);
+
+        if (steepPointsInRegion >= 3) { // At least 3 steep points (increased from 2)
+          const region = {
+            startDistance: distances[regionStart] / 1000,
+            endDistance: distances[regionEnd] / 1000,
+            severity: maxSeverity
+          };
+          console.log(`Steep region: ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
+          regions.push({
+            startDistance: distances[regionStart],
+            endDistance: distances[regionEnd],
+            severity: maxSeverity
+          });
+        }
+        regionStart = null;
+        regionEnd = null;
+        maxSeverity = 0;
+        steepPointsInRegion = 0;
+        gapCounter = 0;
+      }
+    }
+  }
+
+  // Handle final region
+  if (regionStart !== null && regionEnd !== null && steepPointsInRegion >= 3) {
+    regionEnd = Math.min(trackPoints.length - 1, regionEnd + 5);
+    const region = {
+      startDistance: distances[regionStart] / 1000,
+      endDistance: distances[regionEnd] / 1000,
+      severity: maxSeverity
+    };
+    console.log(`Steep region (end): ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
+    regions.push({
+      startDistance: distances[regionStart],
+      endDistance: distances[regionEnd],
+      severity: maxSeverity
+    });
+  }
+
+  console.log(`Total anomaly regions detected: ${regions.length}`);
+  return regions;
+};
+
+export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewFile }: ElevationEditorProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(gpxData.trackPoints);
   const [editedPoints, setEditedPoints] = useState<Set<number>>(new Set());
   const [dragState, setDragState] = useState<{
@@ -148,6 +282,21 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       originalIndex: index
     }));
   }, [gpxData.trackPoints]);
+
+  // Detect elevation anomalies
+  const anomalyRegions = useMemo(() => {
+    const regions = detectElevationAnomalies(trackPoints);
+    console.log('Detected anomaly regions:', regions);
+    console.log('Total track points:', trackPoints.length);
+    if (regions.length > 0) {
+      console.log('First region for rendering check:', {
+        startDistance: regions[0].startDistance,
+        endDistance: regions[0].endDistance,
+        severity: regions[0].severity
+      });
+    }
+    return regions;
+  }, [trackPoints]);
 
   const distanceUnitLabel = unitSystem === 'metric' ? 'km' : 'mi';
   const elevationUnitLabel = unitSystem === 'metric' ? 'm' : 'ft';
@@ -675,7 +824,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   const downloadModifiedGPX = useCallback(() => {
     const modifiedGpxData = { ...gpxData, trackPoints };
     const gpxContent = exportGPX(modifiedGpxData, originalContent);
-    
+
     const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -687,8 +836,38 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     URL.revokeObjectURL(url);
   }, [gpxData, trackPoints, originalContent, filename]);
 
+  const handleLoadNewFile = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (content && onLoadNewFile) {
+        onLoadNewFile(content, file.name);
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset input to allow loading the same file again
+    event.target.value = '';
+  }, [onLoadNewFile]);
+
   return (
     <div className="w-full p-6 space-y-6">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".gpx"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -703,6 +882,10 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           <Button variant="outline" onClick={resetElevation}>
             <RotateCcw className="h-4 w-4 mr-2" />
             Reset
+          </Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleLoadNewFile}>
+            <Upload className="h-4 w-4 mr-2" />
+            Load GPX
           </Button>
           <Button onClick={downloadModifiedGPX}>
             <Download className="h-4 w-4 mr-2" />
@@ -779,7 +962,14 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
           <div className="flex items-start gap-3">
             <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-800">
-              <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Neighbouring samples adjust using the radius and intensity below. Click without dragging to apply a quick local smoothing. 
+              <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Neighbouring samples adjust using the radius and intensity below. Click without dragging to apply a quick local smoothing.
+              {anomalyRegions.length > 0 && (
+                <span className="ml-2">
+                  <Badge variant="secondary" className="bg-red-100 text-red-800">
+                    {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
+                  </Badge>
+                </span>
+              )}
               {stats.editedCount > 0 && (
                 <span className="ml-2">
                   <Badge variant="secondary" className="bg-amber-100 text-amber-800">
@@ -987,6 +1177,25 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                       }}
                     />
+                    {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
+                    {anomalyRegions.length > 0 && console.log('Rendering', anomalyRegions.length, 'anomaly regions')}
+                    {anomalyRegions.map((region, index) => {
+                      console.log(`Rendering ReferenceArea ${index}:`, {
+                        x1: region.startDistance,
+                        x2: region.endDistance,
+                        opacity: Math.min(0.4 + region.severity * 0.1, 0.8)
+                      });
+                      return (
+                        <ReferenceArea
+                          key={`anomaly-${index}`}
+                          x1={region.startDistance}
+                          x2={region.endDistance}
+                          fill="#ff0000"
+                          fillOpacity={0.2}
+                          ifOverflow="visible"
+                        />
+                      );
+                    })}
                     <Line
                       type="monotone"
                       dataKey="elevation"
