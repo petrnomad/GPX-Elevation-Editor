@@ -93,7 +93,7 @@ interface AnomalyRegion {
   severity: number;
 }
 
-const detectElevationAnomalies = (trackPoints: TrackPoint[]): AnomalyRegion[] => {
+const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: number): AnomalyRegion[] => {
   if (trackPoints.length < 10) {
     console.log('Not enough points for anomaly detection:', trackPoints.length);
     return [];
@@ -127,7 +127,7 @@ const detectElevationAnomalies = (trackPoints: TrackPoint[]): AnomalyRegion[] =>
   const isSteep: boolean[] = [false]; // First point has no gradient
   for (let i = 0; i < gradients.length; i++) {
     const hasHighGradient = gradients[i] > gradientThreshold;
-    const hasLargeElevationChange = elevationChanges[i] >= 10; // 10+ meters absolute change (increased from 8)
+    const hasLargeElevationChange = elevationChanges[i] >= threshold; // Use configurable threshold
     isSteep.push(hasHighGradient || hasLargeElevationChange);
   }
 
@@ -232,6 +232,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const dragSnapshotRef = useRef<TrackPoint[] | null>(null);
   const [smoothingRadius, setSmoothingRadius] = useState(5);
   const [smoothingStrength, setSmoothingStrength] = useState(0.4);
+  const [anomalyThreshold, setAnomalyThreshold] = useState(10); // Meters for elevation change detection
   const [history, setHistory] = useState<
     {
       points: TrackPoint[];
@@ -242,6 +243,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const [showMap, setShowMap] = useState(true);
   const [mapKey, setMapKey] = useState(0);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
+  const [hoveredAnomalyIndex, setHoveredAnomalyIndex] = useState<number | null>(null);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
@@ -287,7 +289,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
 
   // Detect elevation anomalies
   const allAnomalyRegions = useMemo(() => {
-    const regions = detectElevationAnomalies(trackPoints);
+    const regions = detectElevationAnomalies(trackPoints, anomalyThreshold);
     console.log('Detected anomaly regions:', regions);
     console.log('Total track points:', trackPoints.length);
     if (regions.length > 0) {
@@ -298,7 +300,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       });
     }
     return regions;
-  }, [trackPoints]);
+  }, [trackPoints, anomalyThreshold]);
 
   // Filter out ignored anomalies
   const anomalyRegions = useMemo(() => {
@@ -1006,7 +1008,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           <CardTitle>Controls</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
@@ -1045,10 +1047,29 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 }}
               />
             </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600">
+                  Anomaly detection threshold
+                </Label>
+                <span className="text-sm text-slate-600">{anomalyThreshold} m</span>
+              </div>
+              <Slider
+                id="anomaly-threshold"
+                min={5}
+                max={30}
+                step={1}
+                value={[anomalyThreshold]}
+                onValueChange={(value: number[]) => {
+                  setAnomalyThreshold(value[0] ?? 10);
+                }}
+              />
+            </div>
           </div>
           <p className="text-xs text-slate-500">
-            Dragging uses these settings to blend the selected point with its neighbours. Clicking without
-            moving applies a gentle average using the same radius and intensity.
+            Dragging uses smoothing settings to blend the selected point with its neighbours. Clicking without
+            moving applies a gentle average using the same radius and intensity. Anomaly threshold controls the
+            minimum elevation change (in meters) required to detect elevation anomalies.
           </p>
         </CardContent>
       </Card>
@@ -1160,20 +1181,27 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                       const totalDistance = stats.totalDistance;
                       const domain = zoomDomain || [0, totalDistance];
 
-                      // Calculate position as percentage (place at the end of anomaly region)
-                      const leftPercent = ((region.endDistance - domain[0]) / (domain[1] - domain[0])) * 100;
+                      // Calculate position at the end (right side) of anomaly region
+                      const regionEndPercent = ((region.endDistance - domain[0]) / (domain[1] - domain[0])) * 100;
 
-                      // Only show if within visible range
-                      if (leftPercent < 0 || leftPercent > 100) return null;
+                      // Only show if end is within visible range
+                      if (regionEndPercent < 0 || regionEndPercent > 100) return null;
+
+                      // Chart margins: left=60px, right=30px, total=90px
+                      const chartLeftMargin = 60;
+                      const chartRightMargin = 30;
+                      const chartMarginTotal = chartLeftMargin + chartRightMargin;
 
                       return (
                         <button
                           key={`close-${index}`}
                           onClick={() => handleIgnoreAnomaly(index)}
-                          className="absolute pointer-events-auto bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
+                          onMouseEnter={() => setHoveredAnomalyIndex(index)}
+                          onMouseLeave={() => setHoveredAnomalyIndex(null)}
+                          className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
                           style={{
-                            left: `calc(${leftPercent}% + 12px)`,
-                            top: '-4px',
+                            left: `calc(${chartLeftMargin}px + (100% - ${chartMarginTotal}px) * ${regionEndPercent / 100})`,
+                            top: '5px',
                           }}
                           title="Ignore this anomaly"
                         >
@@ -1186,6 +1214,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
                     data={chartData}
+                    margin={{ top: 10, right: 30, bottom: 30, left: 60 }}
                     onMouseDown={handleChartMouseDown}
                     onMouseMove={handleChartMouseMove}
                     onMouseUp={handleChartMouseUp}
@@ -1246,7 +1275,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                           x1={region.startDistance}
                           x2={region.endDistance}
                           fill="#ff0000"
-                          fillOpacity={0.2}
+                          fillOpacity={hoveredAnomalyIndex === index ? 0.4 : 0.2}
                           ifOverflow="visible"
                         />
                       );
