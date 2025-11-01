@@ -105,11 +105,12 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     }[]
   >([]);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [showMap, setShowMap] = useState(false);
+  const [showMap, setShowMap] = useState(true);
   const [mapKey, setMapKey] = useState(0);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
@@ -119,6 +120,15 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
   useEffect(() => {
     setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
   }, [maxSmoothingRadius]);
+
+  // Cleanup animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
 
 
   // Convert track points to chart data
@@ -536,6 +546,41 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     setHoveredPointIndex(null);
   }, [completeDrag]);
 
+  const animatePan = useCallback((targetMin: number, targetMax: number, duration: number = 300) => {
+    if (!zoomDomain) return;
+
+    // Cancel any ongoing animation
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    const startMin = zoomDomain[0];
+    const startMax = zoomDomain[1];
+    const startTime = performance.now();
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Easing function for smooth animation (ease-out)
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      const currentMin = startMin + (targetMin - startMin) * eased;
+      const currentMax = startMax + (targetMax - startMax) * eased;
+
+      setZoomDomain([currentMin, currentMax]);
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        animationFrameRef.current = null;
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+  }, [zoomDomain]);
+
   const zoomIn = useCallback(() => {
     const currentDomain = zoomDomain || [0, stats.totalDistance];
     const [domainMin, domainMax] = currentDomain;
@@ -547,9 +592,13 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     const newMax = Math.min(stats.totalDistance, center + newRange / 2);
 
     if (newMax - newMin > stats.totalDistance * 0.05) {
-      setZoomDomain([newMin, newMax]);
+      if (zoomDomain) {
+        animatePan(newMin, newMax);
+      } else {
+        setZoomDomain([newMin, newMax]);
+      }
     }
-  }, [zoomDomain, stats.totalDistance]);
+  }, [zoomDomain, stats.totalDistance, animatePan]);
 
   const zoomOut = useCallback(() => {
     const currentDomain = zoomDomain || [0, stats.totalDistance];
@@ -565,9 +614,13 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
     if (newMax - newMin >= stats.totalDistance) {
       setZoomDomain(null);
     } else {
-      setZoomDomain([newMin, newMax]);
+      if (zoomDomain) {
+        animatePan(newMin, newMax);
+      } else {
+        setZoomDomain([newMin, newMax]);
+      }
     }
-  }, [zoomDomain, stats.totalDistance]);
+  }, [zoomDomain, stats.totalDistance, animatePan]);
 
   const resetZoom = useCallback(() => {
     setZoomDomain(null);
@@ -588,8 +641,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       newMax = domainRange;
     }
 
-    setZoomDomain([newMin, newMax]);
-  }, [zoomDomain]);
+    animatePan(newMin, newMax);
+  }, [zoomDomain, animatePan]);
 
   const panRight = useCallback(() => {
     if (!zoomDomain) return;
@@ -606,8 +659,8 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
       newMin = stats.totalDistance - domainRange;
     }
 
-    setZoomDomain([newMin, newMax]);
-  }, [zoomDomain, stats.totalDistance]);
+    animatePan(newMin, newMax);
+  }, [zoomDomain, stats.totalDistance, animatePan]);
 
   const resetElevation = useCallback(() => {
     if (editedPoints.size > 0) {
@@ -899,7 +952,7 @@ export function ElevationEditor({ gpxData, originalContent, filename }: Elevatio
                       type="number"
                       domain={zoomDomain || [0, 'dataMax']}
                       allowDataOverflow={true}
-                      tickCount={6}
+                      tickCount={15}
                       interval="preserveStartEnd"
                       tickFormatter={(value) => {
                         const distance = convertDistance(value);
