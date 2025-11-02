@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea } from 'recharts';
-import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Upload } from 'lucide-react';
+import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +38,7 @@ const HISTORY_LIMIT = 100;
 const ELEVATION_STEP_THRESHOLD = 2.5; // ignore sub-threshold steps when aggregating gain/loss
 const MEDIAN_WINDOW_SIZE = 3; // 3-point rolling median (one neighbour each side)
 const CHART_MARGINS_DESKTOP = { top: 10, right: 30, bottom: 30, left: 60 } as const;
-const CHART_MARGINS_MOBILE = { top: 10, right: 10, bottom: 30, left: 40 } as const;
+const CHART_MARGINS_MOBILE = { top: 10, right: 5, bottom: 30, left: 5 } as const;
 const ANOMALY_BUTTON_SIZE = 20;
 const ANOMALY_BUTTON_PADDING = 4;
 
@@ -243,18 +243,55 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       editedIndices: number[];
     }[]
   >([]);
-  const [showOriginal, setShowOriginal] = useState(false);
-  const [showAnomalies, setShowAnomalies] = useState(true);
-  const [showMap, setShowMap] = useState(true);
+  const [showOriginal, setShowOriginal] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.showOriginal');
+      return saved !== null ? saved === 'true' : false;
+    }
+    return false;
+  });
+  const [showAnomalies, setShowAnomalies] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.showAnomalies');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
+  const [showMap, setShowMap] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.showMap');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
   const [mapKey, setMapKey] = useState(0);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const [hoveredAnomalyIndex, setHoveredAnomalyIndex] = useState<number | null>(null);
-  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
+  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.unitSystem');
+      return (saved === 'imperial' ? 'imperial' : 'metric') as 'metric' | 'imperial';
+    }
+    return 'metric';
+  });
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
   const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, { top: number; right: number }>>({});
-  const [showHelpCard, setShowHelpCard] = useState(true);
+  const [showHelpCard, setShowHelpCard] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.showHelpCard');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
   const [isMobile, setIsMobile] = useState(false);
+  const [showMobileWarning, setShowMobileWarning] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('elevationEditor.showMobileWarning');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
   const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
@@ -334,6 +371,23 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       setIgnoredAnomalies(new Set());
     }
   }, [showAnomalies]);
+
+  // Save settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('elevationEditor.showOriginal', String(showOriginal));
+  }, [showOriginal]);
+
+  useEffect(() => {
+    localStorage.setItem('elevationEditor.showAnomalies', String(showAnomalies));
+  }, [showAnomalies]);
+
+  useEffect(() => {
+    localStorage.setItem('elevationEditor.showMap', String(showMap));
+  }, [showMap]);
+
+  useEffect(() => {
+    localStorage.setItem('elevationEditor.unitSystem', unitSystem);
+  }, [unitSystem]);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -1035,7 +1089,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   }, [onLoadNewFile]);
 
   return (
-    <div className="w-full p-6 space-y-6">
+    <div className="w-full px-6 pb-6 space-y-6">
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -1046,21 +1100,21 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       />
 
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-gray-50 py-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="sticky top-0 z-50 bg-gray-50 pt-[10px] pb-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between -mx-6 px-6" style={{ marginTop: 0 }}>
         <div>
-          <div className="flex items-center gap-3">
-            <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-10 w-10" />
-            <h1 className="text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
+          <div className="flex items-center gap-2 md:gap-3">
+            <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-6 w-6 md:h-10 md:w-10" />
+            <h1 className="text-lg md:text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
           </div>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-slate-600">Loaded GPX file:</span>
-            <Badge variant="secondary" className="font-mono text-sm">
+          <div className="mt-1 md:mt-2 flex items-center gap-1 md:gap-2 flex-wrap">
+            <span className="text-xs md:text-sm text-slate-600">Loaded GPX file:</span>
+            <Badge variant="secondary" className="font-mono text-xs md:text-sm">
               {filename}
             </Badge>
             {gpxData.name && (
               <>
-                <span className="text-sm text-slate-400">•</span>
-                <Badge variant="outline" className="text-sm">
+                <span className="text-xs md:text-sm text-slate-400 hidden md:inline">•</span>
+                <Badge variant="outline" className="text-xs md:text-sm hidden md:inline-flex">
                   {gpxData.name}
                 </Badge>
               </>
@@ -1068,76 +1122,76 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={handleUndo} disabled={!canUndo}>
-            <Undo2 className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={handleUndo} disabled={!canUndo} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
+            <Undo2 className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
             Undo
           </Button>
-          <Button variant="outline" onClick={resetElevation}>
-            <RotateCcw className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={resetElevation} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
+            <RotateCcw className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
             Reset
           </Button>
-          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleLoadNewFile}>
-            <Upload className="h-4 w-4 mr-2" />
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm" onClick={handleLoadNewFile}>
+            <Upload className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
             Load GPX
           </Button>
-          <Button onClick={downloadModifiedGPX}>
-            <Download className="h-4 w-4 mr-2" />
+          <Button onClick={downloadModifiedGPX} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
+            <Download className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
             Download
           </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Distance</div>
-          <div className="text-lg font-bold">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 md:gap-4">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Distance</div>
+          <div className="text-sm md:text-lg font-bold">
             {convertDistance(stats.totalDistance).toFixed(1)} {distanceUnitLabel}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Lowest Point</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Lowest Point</div>
+          <div className="text-sm md:text-lg font-bold">
             {Math.round(convertElevation(stats.minElevation))} {elevationUnitLabel}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Highest Point</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Highest Point</div>
+          <div className="text-sm md:text-lg font-bold">
             {Math.round(convertElevation(stats.maxElevation))} {elevationUnitLabel}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Total Ascent</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Total Ascent</div>
+          <div className="text-sm md:text-lg font-bold">
             {Math.round(convertElevation(stats.totalAscent))} {elevationUnitLabel}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Total Descent</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Total Descent</div>
+          <div className="text-sm md:text-lg font-bold">
             {Math.round(convertElevation(stats.totalDescent))} {elevationUnitLabel}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Total Time</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Total Time</div>
+          <div className="text-sm md:text-lg font-bold">
             {stats.totalDurationMs && stats.totalDurationMs > 0
               ? formatDuration(stats.totalDurationMs)
               : '—'}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Avg Speed</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Avg Speed</div>
+          <div className="text-sm md:text-lg font-bold">
             {stats.averageSpeed != null
               ? `${convertSpeed(stats.averageSpeed).toFixed(1)} ${speedUnitLabel}`
               : '—'}
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Max Speed</div>
-          <div className="text-lg font-bold">
+        <Card className="p-2 md:p-4">
+          <div className="text-xs md:text-sm text-slate-600">Max Speed</div>
+          <div className="text-sm md:text-lg font-bold">
             {stats.maxSpeed != null
               ? `${convertSpeed(stats.maxSpeed).toFixed(1)} ${speedUnitLabel}`
               : '—'}
@@ -1152,7 +1206,10 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <button
               type="button"
               aria-label="Dismiss editing help"
-              onClick={() => setShowHelpCard(false)}
+              onClick={() => {
+                setShowHelpCard(false);
+                localStorage.setItem('elevationEditor.showHelpCard', 'false');
+              }}
               className="absolute top-2 right-2 text-blue-500 transition-colors hover:bg-blue-500 hover:text-white rounded-full border border-blue-200"
               style={{ margin: '5px', padding: '0px 6px' }}
             >
@@ -1260,22 +1317,30 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 md:gap-2 flex-wrap">
             <div className="flex overflow-hidden rounded-md border border-slate-200">
               <Button
                 type="button"
-                variant={unitSystem === 'metric' ? 'default' : 'ghost'}
+                variant="ghost"
                 size="sm"
-                className="rounded-none"
+                className={`rounded-none h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
+                  unitSystem === 'metric'
+                    ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
+                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                }`}
                 onClick={() => setUnitSystem('metric')}
               >
                 Metric
               </Button>
               <Button
                 type="button"
-                variant={unitSystem === 'imperial' ? 'default' : 'ghost'}
+                variant="ghost"
                 size="sm"
-                className="rounded-none"
+                className={`rounded-none h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
+                  unitSystem === 'imperial'
+                    ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
+                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                }`}
                 onClick={() => setUnitSystem('imperial')}
               >
                 Imperial
@@ -1284,17 +1349,21 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <Button
               variant="ghost"
               size="sm"
-              className="text-slate-600 hover:text-slate-800"
+              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
+                showOriginal
+                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
               onClick={() => setShowOriginal(prev => !prev)}
             >
               {showOriginal ? (
                 <>
-                  <Eye className="h-4 w-4 mr-2" />
+                  <Eye className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
                   Hide original
                 </>
               ) : (
                 <>
-                  <EyeOff className="h-4 w-4 mr-2" />
+                  <EyeOff className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
                   Show original
                 </>
               )}
@@ -1302,17 +1371,21 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <Button
               variant="ghost"
               size="sm"
-              className="text-slate-600 hover:text-slate-800"
+              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
+                !showAnomalies
+                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
               onClick={() => setShowAnomalies(prev => !prev)}
             >
               {showAnomalies ? (
                 <>
-                  <Eye className="h-4 w-4 mr-2" />
+                  <Eye className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
                   Hide anomalies
                 </>
               ) : (
                 <>
-                  <EyeOff className="h-4 w-4 mr-2" />
+                  <EyeOff className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
                   Show anomalies
                 </>
               )}
@@ -1320,7 +1393,11 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <Button
               variant="ghost"
               size="sm"
-              className="text-slate-600 hover:text-slate-800"
+              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
+                !showMap
+                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
               onClick={() => {
                 setShowMap(prev => {
                   if (!prev) {
@@ -1331,14 +1408,24 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 });
               }}
             >
-              <MapIcon className="h-4 w-4 mr-2" />
+              <MapIcon className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
               {showMap ? 'Hide map' : 'Show path on map'}
             </Button>
           </div>
         </CardHeader>
-        {isMobile && (
-          <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <div className="flex gap-2 items-start">
+        {isMobile && showMobileWarning && (
+          <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg relative">
+            <button
+              onClick={() => {
+                setShowMobileWarning(false);
+                localStorage.setItem('elevationEditor.showMobileWarning', 'false');
+              }}
+              className="absolute top-2 right-2 text-amber-600 hover:text-amber-800 transition-colors"
+              aria-label="Close warning"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="flex gap-2 items-start pr-6">
               <span className="text-amber-600 text-lg">⚠️</span>
               <div className="text-sm text-amber-800">
                 <strong>Best used on desktop</strong> - This tool works best on larger screens. Editing elevation curves on mobile is difficult due to limited space.
@@ -1350,7 +1437,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
             <div className="select-none relative">
               {/* Zoom controls overlay - left top */}
-              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: isMobile ? '0px' : '127px', top: '15px', background: 'white' }}>
+              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: isMobile ? '-43px' : '127px', top: '15px', background: 'white' }}>
                 <Button variant="ghost" size="icon" onClick={zoomIn} title="Zoom in" className="h-8 w-8 hover:bg-slate-100">
                   <ZoomIn className="h-4 w-4" />
                 </Button>
@@ -1366,7 +1453,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
 
               {/* Pan controls overlay - right top */}
               {zoomDomain && (
-                <div className="absolute top-4 right-4 z-10 flex gap-1 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-md p-1 shadow-lg">
+                <div className="absolute top-4 z-10 flex gap-1 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-md p-1 shadow-lg" style={{ right: isMobile ? '-43px' : '16px' }}>
                   <Button variant="ghost" size="icon" onClick={panLeft} title="Pan left" className="h-8 w-8 hover:bg-slate-100">
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
@@ -1427,6 +1514,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                         return distance >= 10 ? distance.toFixed(0) : distance.toFixed(1);
                       }}
                       stroke="#64748b"
+                      tick={{ fontSize: isMobile ? 10 : 12 }}
                     />
                     <YAxis
                       domain={[stats.minElevation - 100, stats.maxElevation + 100]}
@@ -1455,8 +1543,18 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                       contentStyle={{
                         backgroundColor: 'white',
                         border: '1px solid #e2e8f0',
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                        borderRadius: isMobile ? '4px' : '8px',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        padding: isMobile ? '4px 6px' : '10px',
+                        fontSize: isMobile ? '10px' : '14px'
+                      }}
+                      labelStyle={{
+                        fontSize: isMobile ? '10px' : '14px',
+                        marginBottom: isMobile ? '2px' : '4px'
+                      }}
+                      itemStyle={{
+                        fontSize: isMobile ? '10px' : '13px',
+                        padding: isMobile ? '1px 0' : '2px 0'
                       }}
                     />
                     {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
