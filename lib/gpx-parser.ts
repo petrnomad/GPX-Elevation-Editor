@@ -91,8 +91,11 @@ export function parseGPX(gpxContent: string): GPXData {
   console.log(`Total distance: ${totalDistance.toFixed(2)}m`);
   console.log(`Elevation gain: ${elevationGain.toFixed(2)}m`);
 
+  // Prefer metadata name over track name
+  const trackName = gpx.metadata?.name || gpx.trk?.name || 'GPX Track';
+
   return {
-    name: gpx.trk?.name || 'GPX Track',
+    name: trackName,
     trackPoints,
     totalDistance,
     elevationGain,
