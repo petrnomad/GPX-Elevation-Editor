@@ -18,15 +18,12 @@ export interface GPXData {
 }
 
 export function parseGPX(gpxContent: string): GPXData {
-  console.log('Starting GPX parsing...');
-  
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_'
   });
 
   const gpxData = parser.parse(gpxContent);
-  console.log('GPX parsed successfully:', gpxData);
 
   const trackPoints: TrackPoint[] = [];
   let totalDistance = 0;
@@ -87,10 +84,6 @@ export function parseGPX(gpxContent: string): GPXData {
     });
   });
 
-  console.log(`Parsed ${trackPoints.length} track points`);
-  console.log(`Total distance: ${totalDistance.toFixed(2)}m`);
-  console.log(`Elevation gain: ${elevationGain.toFixed(2)}m`);
-
   // Prefer metadata name over track name
   const trackName = gpx.metadata?.name || gpx.trk?.name || 'GPX Track';
 
@@ -104,8 +97,6 @@ export function parseGPX(gpxContent: string): GPXData {
 }
 
 export function exportGPX(gpxData: GPXData, originalContent: string): string {
-  console.log('Exporting modified GPX...');
-  
   // Parse the original GPX to maintain structure
   const parser = new XMLParser({
     ignoreAttributes: false,
@@ -141,8 +132,7 @@ export function exportGPX(gpxData: GPXData, originalContent: string): string {
   });
 
   const xmlString = xmlBuilder.build(originalGpx);
-  console.log('GPX export completed');
-  
+
   return `<?xml version="1.0" encoding="UTF-8"?>\n${xmlString}`;
 }
 

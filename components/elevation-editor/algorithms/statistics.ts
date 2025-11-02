@@ -24,7 +24,6 @@ export const calculateElevationStats = (
   totalDistance: number,
   editedCount: number
 ): ElevationStats => {
-  console.log('Calculating stats for', trackPoints.length, 'points');
   const rawElevations = trackPoints.map(point => point.ele);
   const smoothedElevations = computeRollingMedian(rawElevations, MEDIAN_WINDOW_SIZE);
 

@@ -14,10 +14,7 @@ export function GPXUpload({ onFileUpload }: GPXUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  console.log('GPXUpload component rendered');
-
   const handleFile = useCallback((file: File) => {
-    console.log('Processing file:', file.name);
     setError(null);
 
     if (!file.name.toLowerCase().endsWith('.gpx')) {
@@ -28,7 +25,6 @@ export function GPXUpload({ onFileUpload }: GPXUploadProps) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
-      console.log('File read successfully, content length:', content.length);
       onFileUpload(content, file.name);
     };
     reader.onerror = () => {
@@ -41,7 +37,6 @@ export function GPXUpload({ onFileUpload }: GPXUploadProps) {
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    console.log('File dropped');
 
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
@@ -50,7 +45,6 @@ export function GPXUpload({ onFileUpload }: GPXUploadProps) {
   }, [handleFile]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log('File input changed');
     const files = Array.from(e.target.files || []);
     if (files.length > 0) {
       handleFile(files[0]);
