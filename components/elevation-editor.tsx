@@ -1048,6 +1048,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
     setTrackPoints(gpxData.trackPoints);
     setEditedPoints(new Set());
     setIgnoredAnomalies(new Set());
+    setZoomDomain(null);
     setDragState(null);
     dragSnapshotRef.current = null;
   }, [gpxData.trackPoints, editedPoints, pushHistory]);
