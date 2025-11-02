@@ -5,21 +5,21 @@ import { Inter } from "next/font/google";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "GPX Elevation Profile Editor - Edit & Analyze Elevation Profiles Online",
+  title: "Elevation Editor - Edit & Analyze GPX Elevation Profiles Online",
   description: "Free online GPX editor for analyzing and editing elevation profiles. Detect anomalies, smooth elevation data, and export modified GPS tracks. Interactive elevation charts and route visualization.",
   keywords: ["GPX editor", "elevation profile", "GPS track editor", "GPX analyzer", "elevation smoothing", "GPX anomaly detection", "route elevation", "GPX file editor"],
-  authors: [{ name: "GPX Elevation Profile Editor" }],
+  authors: [{ name: "Elevation Editor" }],
   openGraph: {
-    title: "GPX Elevation Profile Editor - Edit & Analyze Elevation Profiles",
+    title: "Elevation Editor - Edit & Analyze GPX Elevation Profiles",
     description: "Free online tool for editing GPX elevation profiles. Detect anomalies, smooth data, and visualize your GPS tracks.",
-    url: "https://petrnovak.com/Projects/elevation",
-    siteName: "GPX Elevation Profile Editor",
+    url: "https://elevationeditor.com",
+    siteName: "Elevation Editor",
     images: [
       {
-        url: "https://petrnovak.com/Projects/elevation/social.png",
+        url: "https://elevationeditor.com/social.png",
         width: 1200,
         height: 630,
-        alt: "GPX Elevation Profile Editor - Elevation Profile Editor",
+        alt: "Elevation Editor - GPX Elevation Profile Editor",
       },
     ],
     locale: "en_US",
@@ -27,9 +27,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "GPX Elevation Profile Editor - Edit & Analyze Elevation Profiles",
+    title: "Elevation Editor - Edit & Analyze GPX Elevation Profiles",
     description: "Free online tool for editing GPX elevation profiles. Detect anomalies, smooth data, and visualize your GPS tracks.",
-    images: ["https://petrnovak.com/Projects/elevation/social.png"],
+    images: ["https://elevationeditor.com/social.png"],
   },
   icons: {
     icon: "./favicon.ico",

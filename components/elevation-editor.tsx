@@ -1028,7 +1028,12 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-10 w-10" />
             <h1 className="text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
           </div>
-          <p className="text-slate-600 mt-1">{filename}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-sm text-slate-600">Loaded GPX file:</span>
+            <Badge variant="secondary" className="font-mono text-sm">
+              {filename}
+            </Badge>
+          </div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={handleUndo} disabled={!canUndo}>

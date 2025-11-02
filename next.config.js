@@ -1,12 +1,7 @@
 /** @type {import('next').NextConfig} */
 
-// Use basePath only in production build, not in development
-const isProduction = process.env.NODE_ENV === 'production';
-const basePath = isProduction ? '/Projects/elevation' : '';
-
 const nextConfig = {
   output: 'export',
-  basePath: basePath,
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -20,10 +15,8 @@ const nextConfig = {
   images: { unoptimized: true },
   devIndicators: false,
   allowedDevOrigins: [
-    "*.macaly.dev",
-    "*.macaly.app",
-    "*.macaly-app.com",
-    "*.macaly-user-data.dev",
+    "elevationeditor.com",
+    "*.elevationeditor.com",
   ],
   // Workaround pro Next.js 15 static export bug s .nft.json
   experimental: {

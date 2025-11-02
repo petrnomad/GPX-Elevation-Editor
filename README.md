@@ -1,10 +1,10 @@
-# GPX Adjuster
+# Elevation Editor
 
 A web application for editing and analyzing GPX files with advanced features for elevation profile editing.
 
 ## Description
 
-GPX Adjuster is a modern web application built with Next.js that enables:
+Elevation Editor is a modern web application built with Next.js that enables:
 
 - **GPX File Loading** - Import your own GPS tracks in GPX format
 - **Elevation Profile Visualization** - Interactive elevation chart
