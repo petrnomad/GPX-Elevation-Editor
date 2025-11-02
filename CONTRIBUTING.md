@@ -64,8 +64,8 @@ Unsure where to begin? Look for issues tagged with:
 
 1. **Fork and clone the repository**
    ```bash
-   git clone https://github.com/yourusername/elevation-editor.git
-   cd elevation-editor
+   git clone https://github.com/petrnomad/GPX-Elevation-Editor.git
+   cd GPX-Elevation-Editor
    ```
 
 2. **Install dependencies**
