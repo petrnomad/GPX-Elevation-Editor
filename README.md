@@ -10,7 +10,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-38bdf8)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[Live Demo](https://elevationeditor.com) · [Report Bug](https://github.com/yourusername/elevation-editor/issues) · [Request Feature](https://github.com/yourusername/elevation-editor/issues)
+[Live Demo](https://elevationeditor.com) · [Report Bug](https://github.com/petrnomad/GPX-Elevation-Editor/issues) · [Request Feature](https://github.com/petrnomad/GPX-Elevation-Editor/issues)
 
 </div>
 
@@ -136,8 +136,8 @@ If you don't fall into any of these categories, you'll probably never use this t
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/elevation-editor.git
-   cd elevation-editor
+   git clone https://github.com/petrnomad/GPX-Elevation-Editor.git
+   cd GPX-Elevation-Editor
    ```
 
 2. **Install dependencies**
@@ -330,11 +330,11 @@ This generates optimized static files in the `/out` directory, ready for deploym
 
 ### Vercel (Recommended)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/elevation-editor)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/petrnomad/GPX-Elevation-Editor)
 
 ### Netlify
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/yourusername/elevation-editor)
+[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/petrnomad/GPX-Elevation-Editor)
 
 ---
 

@@ -2,6 +2,17 @@
   "name": "elevation-editor",
   "version": "1.0.0",
   "private": true,
+  "description": "A powerful, browser-based GPX elevation profile editor with anomaly detection and advanced smoothing capabilities",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/petrnomad/GPX-Elevation-Editor.git"
+  },
+  "homepage": "https://elevationeditor.com",
+  "bugs": {
+    "url": "https://github.com/petrnomad/GPX-Elevation-Editor/issues"
+  },
+  "author": "Petr Novák <jsem@petrnovak.com> (https://petrnovak.com)",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
