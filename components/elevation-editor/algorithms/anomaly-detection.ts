@@ -45,12 +45,23 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
     elevationChanges.push(Math.abs(elevations[i] - elevations[i - 1]));
   }
 
-  // Find steep sections - either high gradient OR large absolute elevation change
+  // Find steep sections
+  // For high thresholds (>= 50m), only detect large elevation changes
+  // For low thresholds (< 50m), also consider gradient (for detecting GPS errors on gentle slopes)
   const isSteep: boolean[] = [false]; // First point has no gradient
+  const useGradientCheck = threshold < 50;
+
   for (let i = 0; i < gradients.length; i++) {
-    const hasHighGradient = gradients[i] > gradientThreshold;
-    const hasLargeElevationChange = elevationChanges[i] >= threshold; // Use configurable threshold
-    isSteep.push(hasHighGradient || hasLargeElevationChange);
+    const hasLargeElevationChange = elevationChanges[i] >= threshold;
+
+    if (useGradientCheck) {
+      // Low threshold: detect either high gradient OR large elevation change
+      const hasHighGradient = gradients[i] > gradientThreshold;
+      isSteep.push(hasHighGradient || hasLargeElevationChange);
+    } else {
+      // High threshold: only detect large elevation changes
+      isSteep.push(hasLargeElevationChange);
+    }
   }
 
   const steepCount = isSteep.filter(s => s).length;

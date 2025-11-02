@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { GPXData, TrackPoint, exportGPX } from '@/lib/gpx-parser';
 import { ElevationEditorProps, ChartDataPoint, DragState } from './elevation-editor/types';
 import { detectElevationAnomalies } from './elevation-editor/algorithms/anomaly-detection';
@@ -85,6 +85,11 @@ export function ElevationEditor({
   );
 
   const stats = useElevationStats(trackPoints, gpxData.totalDistance, editedPoints.size);
+
+  // Clear ignored anomalies when threshold changes
+  useEffect(() => {
+    setIgnoredAnomalies(new Set());
+  }, [anomalyThreshold]);
 
   // ============================================================================
   // Computed values

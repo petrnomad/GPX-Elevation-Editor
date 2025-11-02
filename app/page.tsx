@@ -61,7 +61,7 @@ export default function Home() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex justify-center items-center">
-        <div className="text-lg text-slate-600">Loading...</div>
+        <div className="text-lg text-slate-600">Loading GPX Editor...</div>
       </div>
     );
   }
@@ -69,7 +69,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <Toaster />
-      <div className="flex-1">
+      <div className="flex-1 px-[25px]">
         {gpxData && (
           <ElevationEditor
             key={filename}
