@@ -1,1646 +1,299 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea } from 'recharts';
-import { Download, RotateCcw, Info, Undo2, Eye, EyeOff, Map as MapIcon, ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Upload, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Slider } from '@/components/ui/slider';
-import { Label } from '@/components/ui/label';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { GPXData, TrackPoint, exportGPX } from '@/lib/gpx-parser';
-const ElevationMap = dynamic<{ points: Array<{ lat: number; lon: number }>; hoveredPointIndex?: number | null }>(
-  () => import('@/components/elevation-map').then(mod => mod.ElevationMap),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-96 w-full rounded-md bg-slate-100 animate-pulse" aria-label="Loading map" />
-    )
-  }
-);
+import { ElevationEditorProps, ChartDataPoint, DragState } from './elevation-editor/types';
+import { detectElevationAnomalies } from './elevation-editor/algorithms/anomaly-detection';
+import { applySmoothTransition, applyClickSmoothing } from './elevation-editor/algorithms/smoothing';
 
-interface ElevationEditorProps {
-  gpxData: GPXData;
-  originalContent: string;
-  filename: string;
-  onLoadNewFile?: (content: string, filename: string) => void;
-}
+// Import custom hooks
+import { useLocalStorageState } from './elevation-editor/hooks/useLocalStorageState';
+import { useMobileDetection } from './elevation-editor/hooks/useMobileDetection';
+import { useUnitConversion } from './elevation-editor/hooks/useUnitConversion';
+import { useElevationHistory } from './elevation-editor/hooks/useElevationHistory';
+import { useZoomPan } from './elevation-editor/hooks/useZoomPan';
+import { useElevationStats } from './elevation-editor/hooks/useElevationStats';
+import { useChartInteractions } from './elevation-editor/hooks/useChartInteractions';
+import { useAnomalyButtonPositioning } from './elevation-editor/hooks/useAnomalyButtonPositioning';
 
-interface ChartDataPoint {
-  distance: number;
-  elevation: number;
-  originalIndex: number;
-  isEdited?: boolean;
-}
+// Import UI components
+import {
+  Header,
+  StatsGrid,
+  HelpCard,
+  ControlsCard,
+  ChartCard
+} from './elevation-editor/components';
 
-const HISTORY_LIMIT = 100;
-const ELEVATION_STEP_THRESHOLD = 2.5; // ignore sub-threshold steps when aggregating gain/loss
-const MEDIAN_WINDOW_SIZE = 3; // 3-point rolling median (one neighbour each side)
-const CHART_MARGINS_DESKTOP = { top: 10, right: 30, bottom: 30, left: 60 } as const;
-const CHART_MARGINS_MOBILE = { top: 10, right: 5, bottom: 30, left: 5 } as const;
-const ANOMALY_BUTTON_SIZE = 20;
-const ANOMALY_BUTTON_PADDING = 4;
-
-const parseTimestamp = (value?: string): number | null => {
-  if (!value) {
-    return null;
-  }
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? null : timestamp;
-};
-
-const formatDuration = (milliseconds: number): string => {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
-    return '—';
-  }
-
-  const totalSeconds = Math.floor(milliseconds / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds
-      .toString()
-      .padStart(2, '0')}s`;
-  }
-
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-};
-
-const computeRollingMedian = (values: number[], windowSize: number): number[] => {
-  if (values.length === 0) {
-    return [];
-  }
-
-  const oddWindow = Math.max(1, windowSize % 2 === 0 ? windowSize + 1 : windowSize);
-  const halfWindow = Math.floor(oddWindow / 2);
-
-  return values.map((_, index) => {
-    const start = Math.max(0, index - halfWindow);
-    const end = Math.min(values.length - 1, index + halfWindow);
-    const windowValues = values.slice(start, end + 1).slice().sort((a, b) => a - b);
-    const mid = Math.floor(windowValues.length / 2);
-
-    if (windowValues.length % 2 === 0) {
-      return (windowValues[mid - 1] + windowValues[mid]) / 2;
-    }
-
-    return windowValues[mid];
-  });
-};
-
-interface AnomalyRegion {
-  startDistance: number;
-  endDistance: number;
-  severity: number;
-}
-
-const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: number): AnomalyRegion[] => {
-  if (trackPoints.length < 10) {
-    console.log('Not enough points for anomaly detection:', trackPoints.length);
-    return [];
-  }
-
-  const elevations = trackPoints.map(p => p.ele);
-  const distances = trackPoints.map(p => p.distance || 0);
-
-  // Calculate elevation changes (gradient) between consecutive points
-  const gradients: number[] = [];
-  for (let i = 1; i < elevations.length; i++) {
-    const elevChange = elevations[i] - elevations[i - 1];
-    const distChange = (distances[i] - distances[i - 1]) || 1;
-    // Gradient in meters per meter
-    gradients.push(Math.abs(elevChange / distChange));
-  }
-
-  // Calculate average gradient
-  const avgGradient = gradients.reduce((sum, g) => sum + g, 0) / gradients.length;
-  const gradientThreshold = Math.max(avgGradient * 3, 0.05); // 3x average or minimum 5% grade
-
-  console.log(`Average gradient: ${(avgGradient * 100).toFixed(2)}%, threshold: ${(gradientThreshold * 100).toFixed(2)}%`);
-
-  // Also check for absolute elevation changes (detect sudden jumps)
-  const elevationChanges: number[] = [];
-  for (let i = 1; i < elevations.length; i++) {
-    elevationChanges.push(Math.abs(elevations[i] - elevations[i - 1]));
-  }
-
-  // Find steep sections - either high gradient OR large absolute elevation change
-  const isSteep: boolean[] = [false]; // First point has no gradient
-  for (let i = 0; i < gradients.length; i++) {
-    const hasHighGradient = gradients[i] > gradientThreshold;
-    const hasLargeElevationChange = elevationChanges[i] >= threshold; // Use configurable threshold
-    isSteep.push(hasHighGradient || hasLargeElevationChange);
-  }
-
-  const steepCount = isSteep.filter(s => s).length;
-  console.log(`Found ${steepCount} steep points out of ${trackPoints.length} total points`);
-
-  // Log steep points
-  isSteep.forEach((steep, i) => {
-    if (steep && i > 0) {
-      const elevChange = i - 1 < elevationChanges.length ? elevationChanges[i - 1] : 0;
-      console.log(`Steep section at index ${i}, distance: ${(distances[i] / 1000).toFixed(3)}km, elevation: ${elevations[i]}m, gradient: ${(gradients[i - 1] * 100).toFixed(2)}%, elev change: ${elevChange.toFixed(1)}m`);
-    }
-  });
-
-  // Group steep sections into anomaly regions
-  const regions: AnomalyRegion[] = [];
-  const maxGap = 5; // Allow up to 5 non-steep points between steep sections (reduced from 7)
-  let regionStart: number | null = null;
-  let regionEnd: number | null = null;
-  let maxSeverity = 0;
-  let gapCounter = 0;
-  let steepPointsInRegion = 0;
-
-  for (let i = 0; i < isSteep.length; i++) {
-    if (isSteep[i]) {
-      if (regionStart === null) {
-        // Start new region - go back to capture the full anomaly
-        regionStart = Math.max(0, i - 5);
-        regionEnd = i;
-        const severity = i > 0 ? gradients[i - 1] / gradientThreshold : 1;
-        maxSeverity = severity;
-        steepPointsInRegion = 1;
-        gapCounter = 0;
-      } else {
-        // Continue region
-        regionEnd = i;
-        const severity = i > 0 ? gradients[i - 1] / gradientThreshold : 1;
-        maxSeverity = Math.max(maxSeverity, severity);
-        steepPointsInRegion++;
-        gapCounter = 0;
-      }
-    } else if (regionStart !== null) {
-      // We're in a gap
-      gapCounter++;
-
-      if (gapCounter > maxGap) {
-        // Gap too large, end the region - extend forward to capture the full anomaly
-        regionEnd = Math.min(trackPoints.length - 1, regionEnd! + 3);
-
-        if (steepPointsInRegion >= 3) { // At least 3 steep points (increased from 2)
-          const region = {
-            startDistance: distances[regionStart] / 1000,
-            endDistance: distances[regionEnd] / 1000,
-            severity: maxSeverity
-          };
-          console.log(`Steep region: ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
-          regions.push({
-            startDistance: distances[regionStart],
-            endDistance: distances[regionEnd],
-            severity: maxSeverity
-          });
-        }
-        regionStart = null;
-        regionEnd = null;
-        maxSeverity = 0;
-        steepPointsInRegion = 0;
-        gapCounter = 0;
-      }
-    }
-  }
-
-  // Handle final region
-  if (regionStart !== null && regionEnd !== null && steepPointsInRegion >= 3) {
-    regionEnd = Math.min(trackPoints.length - 1, regionEnd + 5);
-    const region = {
-      startDistance: distances[regionStart] / 1000,
-      endDistance: distances[regionEnd] / 1000,
-      severity: maxSeverity
-    };
-    console.log(`Steep region (end): ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
-    regions.push({
-      startDistance: distances[regionStart],
-      endDistance: distances[regionEnd],
-      severity: maxSeverity
-    });
-  }
-
-  console.log(`Total anomaly regions detected: ${regions.length}`);
-  return regions;
-};
-
-export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewFile }: ElevationEditorProps) {
+export function ElevationEditor({
+  gpxData,
+  originalContent,
+  filename,
+  onLoadNewFile
+}: ElevationEditorProps) {
+  // ============================================================================
+  // Refs
+  // ============================================================================
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragSnapshotRef = useRef<TrackPoint[] | null>(null);
+
+  // ============================================================================
+  // Local state
+  // ============================================================================
   const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(gpxData.trackPoints);
   const [editedPoints, setEditedPoints] = useState<Set<number>>(new Set());
-  const [dragState, setDragState] = useState<{
-    index: number;
-    startY: number;
-    startElevation: number;
-    hasMoved: boolean;
-  } | null>(null);
-  const dragSnapshotRef = useRef<TrackPoint[] | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
   const [smoothingRadius, setSmoothingRadius] = useState(5);
   const [smoothingStrength, setSmoothingStrength] = useState(0.25);
-  const [anomalyThreshold, setAnomalyThreshold] = useState(10); // Meters for elevation change detection
-  const [history, setHistory] = useState<
-    {
-      points: TrackPoint[];
-      editedIndices: number[];
-    }[]
-  >([]);
-  const [showOriginal, setShowOriginal] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.showOriginal');
-      return saved !== null ? saved === 'true' : false;
-    }
-    return false;
-  });
-  const [showAnomalies, setShowAnomalies] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.showAnomalies');
-      return saved !== null ? saved === 'true' : true;
-    }
-    return true;
-  });
-  const [showMap, setShowMap] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.showMap');
-      return saved !== null ? saved === 'true' : true;
-    }
-    return true;
-  });
-  const [mapKey, setMapKey] = useState(0);
-  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
-  const [hoveredAnomalyIndex, setHoveredAnomalyIndex] = useState<number | null>(null);
-  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.unitSystem');
-      return (saved === 'imperial' ? 'imperial' : 'metric') as 'metric' | 'imperial';
-    }
-    return 'metric';
-  });
-  const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const [anomalyThreshold, setAnomalyThreshold] = useState(10);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
-  const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, { top: number; right: number }>>({});
-  const [showHelpCard, setShowHelpCard] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.showHelpCard');
-      return saved !== null ? saved === 'true' : true;
-    }
-    return true;
-  });
-  const [isMobile, setIsMobile] = useState(false);
-  const [showMobileWarning, setShowMobileWarning] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('elevationEditor.showMobileWarning');
-      return saved !== null ? saved === 'true' : true;
-    }
-    return true;
-  });
-  const animationFrameRef = useRef<number | null>(null);
+  const [mapKey, setMapKey] = useState(0);
+
+  // ============================================================================
+  // Custom hooks
+  // ============================================================================
+  const isMobile = useMobileDetection();
+
+  const [showOriginal, setShowOriginal] = useLocalStorageState('elevationEditor.showOriginal', false);
+  const [showAnomalies, setShowAnomalies] = useLocalStorageState('elevationEditor.showAnomalies', true);
+  const [showMap, setShowMap] = useLocalStorageState('elevationEditor.showMap', true);
+  const [showHelpCard, setShowHelpCard] = useLocalStorageState('elevationEditor.showHelpCard', true);
+  const [showMobileWarning, setShowMobileWarning] = useLocalStorageState('elevationEditor.showMobileWarning', true);
+
+  const {
+    unitSystem,
+    setUnitSystem,
+    convertDistance,
+    convertElevation,
+    convertSpeed,
+    distanceUnitLabel,
+    elevationUnitLabel,
+    speedUnitLabel
+  } = useUnitConversion();
+
+  const { canUndo, pushHistory, handleUndo } = useElevationHistory(
+    trackPoints,
+    editedPoints,
+    setTrackPoints,
+    setEditedPoints,
+    setDragState,
+    dragSnapshotRef
+  );
+
+  const { zoomDomain, zoomIn, zoomOut, resetZoom, panLeft, panRight } = useZoomPan(
+    gpxData.totalDistance
+  );
+
+  const stats = useElevationStats(trackPoints, gpxData.totalDistance, editedPoints.size);
+
+  // ============================================================================
+  // Computed values
+  // ============================================================================
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
     [trackPoints.length]
   );
-  const canUndo = history.length > 0;
-  const chartContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
-  }, [maxSmoothingRadius]);
+  const chartData: ChartDataPoint[] = useMemo(
+    () =>
+      trackPoints.map((point, index) => ({
+        distance: point.distance || 0,
+        elevation: point.ele,
+        originalIndex: index,
+        isEdited: editedPoints.has(index)
+      })),
+    [trackPoints, editedPoints]
+  );
 
-  // Detect mobile screen size
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
+  const originalChartData: ChartDataPoint[] = useMemo(
+    () =>
+      gpxData.trackPoints.map((point, index) => ({
+        distance: point.distance || 0,
+        elevation: point.ele,
+        originalIndex: index
+      })),
+    [gpxData.trackPoints]
+  );
 
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-    };
-  }, []);
-
-  // Cleanup animation on unmount
-  useEffect(() => {
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
-
-
-  // Convert track points to chart data
-  const chartData: ChartDataPoint[] = useMemo(() => {
-    return trackPoints.map((point, index) => ({
-      distance: point.distance || 0,
-      elevation: point.ele,
-      originalIndex: index,
-      isEdited: editedPoints.has(index)
-    }));
-  }, [trackPoints, editedPoints]);
-  const originalChartData = useMemo(() => {
-    return gpxData.trackPoints.map((point, index) => ({
-      distance: point.distance || 0,
-      elevation: point.ele,
-      originalIndex: index
-    }));
-  }, [gpxData.trackPoints]);
-
-  // Detect elevation anomalies
-  const allAnomalyRegions = useMemo(() => {
-    const regions = detectElevationAnomalies(trackPoints, anomalyThreshold);
-    console.log('Detected anomaly regions:', regions);
-    console.log('Total track points:', trackPoints.length);
-    if (regions.length > 0) {
-      console.log('First region for rendering check:', {
-        startDistance: regions[0].startDistance,
-        endDistance: regions[0].endDistance,
-        severity: regions[0].severity
-      });
-    }
-    return regions;
-  }, [trackPoints, anomalyThreshold]);
-
-  // Filter out ignored anomalies
   const anomalyRegions = useMemo(() => {
-    return allAnomalyRegions.filter((_, index) => !ignoredAnomalies.has(index));
-  }, [allAnomalyRegions, ignoredAnomalies]);
+    const regions = detectElevationAnomalies(trackPoints, anomalyThreshold);
+    return regions.filter((_, index) => !ignoredAnomalies.has(index));
+  }, [trackPoints, anomalyThreshold, ignoredAnomalies]);
 
-  // Reset ignored anomalies when toggling anomaly detection back on
-  useEffect(() => {
-    if (showAnomalies) {
-      setIgnoredAnomalies(new Set());
-    }
-  }, [showAnomalies]);
-
-  // Save settings to localStorage
-  useEffect(() => {
-    localStorage.setItem('elevationEditor.showOriginal', String(showOriginal));
-  }, [showOriginal]);
-
-  useEffect(() => {
-    localStorage.setItem('elevationEditor.showAnomalies', String(showAnomalies));
-  }, [showAnomalies]);
-
-  useEffect(() => {
-    localStorage.setItem('elevationEditor.showMap', String(showMap));
-  }, [showMap]);
-
-  useEffect(() => {
-    localStorage.setItem('elevationEditor.unitSystem', unitSystem);
-  }, [unitSystem]);
-
-  useEffect(() => {
-    const container = chartContainerRef.current;
-
-    if (!container || anomalyRegions.length === 0) {
-      setAnomalyButtonOffsets({});
-      return;
-    }
-
-    let frame: number | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let mutationObserver: MutationObserver | null = null;
-
-    const measure = () => {
-      if (!container || anomalyRegions.length === 0) {
-        setAnomalyButtonOffsets({});
-        return;
-      }
-
-      const containerRect = container.getBoundingClientRect();
-      const nextStyles: Record<number, { top: number; right: number }> = {};
-
-      anomalyRegions.forEach((_, index) => {
-        const shape = container.querySelector<SVGGraphicsElement>(
-          `.anomaly-area-${index} rect, .anomaly-area-${index} path`
-        );
-        if (!shape) {
-          return;
-        }
-
-        const rectBox = shape.getBoundingClientRect();
-        const rawRight = containerRect.right - rectBox.right + ANOMALY_BUTTON_PADDING - 14;
-
-        const clampedRight = Math.max(
-          ANOMALY_BUTTON_PADDING,
-          Math.min(
-            rawRight,
-            container.clientWidth - ANOMALY_BUTTON_SIZE - ANOMALY_BUTTON_PADDING
-          )
-        );
-
-        nextStyles[index] = { top: 0, right: clampedRight };
-      });
-
-      setAnomalyButtonOffsets(prev => {
-        const prevKeys = Object.keys(prev);
-        const nextKeys = Object.keys(nextStyles);
-
-        if (prevKeys.length !== nextKeys.length) {
-          return nextStyles;
-        }
-
-        for (const key of nextKeys) {
-          const numericKey = Number(key);
-          const prevValue = prev[numericKey];
-          const nextValue = nextStyles[numericKey];
-
-          if (!prevValue || !nextValue) {
-            return nextStyles;
-          }
-
-          if (prevValue.top !== nextValue.top || prevValue.right !== nextValue.right) {
-            return nextStyles;
-          }
-        }
-
-        return prev;
-      });
-    };
-
-    const scheduleMeasure = () => {
-      if (frame !== null) {
-        cancelAnimationFrame(frame);
-      }
-      frame = requestAnimationFrame(measure);
-    };
-
-    scheduleMeasure();
-
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(() => scheduleMeasure());
-      resizeObserver.observe(container);
-    }
-
-    if (typeof MutationObserver !== 'undefined') {
-      mutationObserver = new MutationObserver(() => scheduleMeasure());
-      mutationObserver.observe(container, {
-        attributes: true,
-        attributeFilter: ['transform', 'd'],
-        childList: true,
-        subtree: true
-      });
-    }
-
-    return () => {
-      if (frame !== null) {
-        cancelAnimationFrame(frame);
-      }
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-      }
-      if (mutationObserver) {
-        mutationObserver.disconnect();
-      }
-    };
-  }, [anomalyRegions, zoomDomain, chartData]);
-
-  const handleIgnoreAnomaly = useCallback((anomalyIndex: number) => {
-    setIgnoredAnomalies(prev => {
-      const next = new Set(prev);
-      // Find the actual index in allAnomalyRegions
-      let currentVisibleIndex = 0;
-      for (let i = 0; i < allAnomalyRegions.length; i++) {
-        if (!prev.has(i)) {
-          if (currentVisibleIndex === anomalyIndex) {
-            next.add(i);
-            break;
-          }
-          currentVisibleIndex++;
-        }
-      }
-      return next;
-    });
-  }, [allAnomalyRegions]);
-
-  const distanceUnitLabel = unitSystem === 'metric' ? 'km' : 'mi';
-  const elevationUnitLabel = unitSystem === 'metric' ? 'm' : 'ft';
-  const speedUnitLabel = unitSystem === 'metric' ? 'km/h' : 'mph';
-
-  const convertDistance = useCallback(
-    (meters: number) => {
-      if (unitSystem === 'metric') {
-        return meters / 1000;
-      }
-      return meters / 1609.344;
-    },
-    [unitSystem]
+  const { chartContainerRef, anomalyButtonOffsets } = useAnomalyButtonPositioning(
+    anomalyRegions,
+    zoomDomain,
+    chartData
   );
 
-  const convertElevation = useCallback(
-    (meters: number) => {
-      if (unitSystem === 'metric') {
-        return meters;
-      }
-      return meters * 3.28084;
-    },
-    [unitSystem]
-  );
-
-  const convertSpeed = useCallback(
-    (metersPerSecond: number) => {
-      if (unitSystem === 'metric') {
-        return metersPerSecond * 3.6;
-      }
-      return metersPerSecond * 2.23693629;
-    },
-    [unitSystem]
-  );
-
-  // Smart smoothing algorithm used while dragging
-  const applySmoothTransition = useCallback(
-    (
-      sourcePoints: TrackPoint[],
-      targetIndex: number,
-      newElevation: number,
-      radius: number,
-      strength: number
-    ) => {
-      const effectiveRadius = Math.max(0, Math.round(radius));
-      const clampedStrength = Math.min(Math.max(strength, 0), 1);
-      const clampedElevation = Math.max(0, newElevation);
-      const newPoints = sourcePoints.map((point, index) =>
-        index === targetIndex ? { ...point, ele: clampedElevation } : { ...point }
-      );
-
-      if (effectiveRadius === 0 || clampedStrength === 0) {
-        return newPoints;
-      }
-
-      const denominator = effectiveRadius + 1;
-
-      for (let offset = 1; offset <= effectiveRadius; offset++) {
-        const distanceFactor = Math.max(0, 1 - offset / denominator);
-        const influence = clampedStrength * distanceFactor;
-        if (influence <= 0) {
-          continue;
-        }
-
-        const leftIndex = targetIndex - offset;
-        if (leftIndex >= 0) {
-          const baseline = sourcePoints[leftIndex].ele;
-          const blended = baseline + (clampedElevation - baseline) * influence;
-          newPoints[leftIndex] = { ...newPoints[leftIndex], ele: Math.max(0, blended) };
-        }
-
-        const rightIndex = targetIndex + offset;
-        if (rightIndex < sourcePoints.length) {
-          const baseline = sourcePoints[rightIndex].ele;
-          const blended = baseline + (clampedElevation - baseline) * influence;
-          newPoints[rightIndex] = { ...newPoints[rightIndex], ele: Math.max(0, blended) };
-        }
-      }
-
-      return newPoints;
-    },
-    []
-  );
-
-  const applyClickSmoothing = useCallback(
-    (sourcePoints: TrackPoint[], targetIndex: number, radius: number, strength: number) => {
-      const effectiveRadius = Math.max(0, Math.round(radius));
-      const clampedStrength = Math.min(Math.max(strength, 0), 1);
-      if (clampedStrength === 0) {
-        return sourcePoints.map(point => ({ ...point }));
-      }
-
-      const start = Math.max(0, targetIndex - effectiveRadius);
-      const end = Math.min(sourcePoints.length - 1, targetIndex + effectiveRadius);
-      const window = sourcePoints.slice(start, end + 1);
-      if (window.length === 0) {
-        return sourcePoints.map(point => ({ ...point }));
-      }
-
-      const average = window.reduce((sum, point) => sum + point.ele, 0) / window.length;
-      const newPoints = sourcePoints.map(point => ({ ...point }));
-
-      for (let index = start; index <= end; index++) {
-        const distance = Math.abs(index - targetIndex);
-        let influence = 0;
-
-        if (effectiveRadius === 0) {
-          influence = distance === 0 ? clampedStrength : 0;
-        } else {
-          const distanceFactor = Math.max(0, 1 - distance / (effectiveRadius + 1));
-          influence = clampedStrength * distanceFactor;
-        }
-
-        if (influence <= 0) {
-          continue;
-        }
-
-        const currentEle = sourcePoints[index].ele;
-        const smoothedEle = currentEle + (average - currentEle) * influence;
-        newPoints[index] = { ...newPoints[index], ele: Math.max(0, smoothedEle) };
-      }
-
-      return newPoints;
-    },
-    []
-  );
-
-  const pushHistory = useCallback(() => {
-    setHistory(prev => {
-      const snapshot = {
-        points: trackPoints.map(point => ({ ...point })),
-        editedIndices: Array.from(editedPoints)
-      };
-      if (prev.length >= HISTORY_LIMIT) {
-        return [...prev.slice(1), snapshot];
-      }
-      return [...prev, snapshot];
-    });
-  }, [trackPoints, editedPoints]);
-
-  const handleUndo = useCallback(() => {
-    setHistory(prev => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const nextHistory = prev.slice(0, -1);
-      const last = prev[prev.length - 1];
-      setTrackPoints(last.points.map(point => ({ ...point })));
-      setEditedPoints(new Set(last.editedIndices));
-      dragSnapshotRef.current = null;
-      setDragState(null);
-      return nextHistory;
-    });
-  }, [setTrackPoints, setEditedPoints, setDragState]);
-
-  // Keyboard shortcut for undo (Ctrl+Z / Cmd+Z)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        e.preventDefault();
-        handleUndo();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleUndo]);
-
-  const stats = useMemo(() => {
-    console.log('Calculating stats for', trackPoints.length, 'points');
-    const rawElevations = trackPoints.map(point => point.ele);
-    const smoothedElevations = computeRollingMedian(rawElevations, MEDIAN_WINDOW_SIZE);
-
-    const minEle = Math.min(...rawElevations);
-    const maxEle = Math.max(...rawElevations);
-    const totals = smoothedElevations.reduce(
-      (acc, elevation, index) => {
-        if (index === 0) {
-          return acc;
-        }
-        const diff = elevation - smoothedElevations[index - 1];
-        if (Math.abs(diff) < ELEVATION_STEP_THRESHOLD) {
-          return acc;
-        }
-        if (diff > 0) {
-          acc.ascent += diff;
-        } else {
-          acc.descent += Math.abs(diff);
-        }
-        return acc;
-      },
-      { ascent: 0, descent: 0 }
+  const { hoveredPointIndex, handleChartMouseDown, handleChartMouseMove, handleChartMouseUp, handleChartMouseLeave } =
+    useChartInteractions(
+      trackPoints,
+      setTrackPoints,
+      editedPoints,
+      setEditedPoints,
+      smoothingRadius,
+      smoothingStrength,
+      stats,
+      pushHistory,
+      dragSnapshotRef,
+      setDragState
     );
 
-    let startTime: number | null = null;
-    let endTime: number | null = null;
-    let totalDurationSeconds = 0;
-    let maxSpeed = 0;
-    let distanceForSpeed = 0;
-
-    trackPoints.forEach((point, index) => {
-      const currentTime = parseTimestamp(point.time);
-      if (currentTime === null) {
-        return;
-      }
-
-      if (startTime === null) {
-        startTime = currentTime;
-      }
-      endTime = currentTime;
-
-      if (index === 0) {
-        return;
-      }
-
-      const prevPoint = trackPoints[index - 1];
-      const prevTime = parseTimestamp(prevPoint.time);
-      if (prevTime === null) {
-        return;
-      }
-
-      const deltaSeconds = (currentTime - prevTime) / 1000;
-      if (deltaSeconds <= 0) {
-        return;
-      }
-
-      const prevDistance = prevPoint.distance ?? 0;
-      const currentDistance = point.distance ?? prevDistance;
-      const deltaDistance = Math.max(0, currentDistance - prevDistance);
-      distanceForSpeed += deltaDistance;
-
-      const speed = deltaDistance / deltaSeconds;
-      if (speed > maxSpeed) {
-        maxSpeed = speed;
-      }
-
-      totalDurationSeconds += deltaSeconds;
-    });
-
-    const totalDurationMs = totalDurationSeconds * 1000;
-    const averageSpeed = totalDurationSeconds > 0 ? distanceForSpeed / totalDurationSeconds : null;
-    const maxSegmentSpeed = maxSpeed > 0 ? maxSpeed : null;
-
-    return {
-      minElevation: minEle,
-      maxElevation: maxEle,
-      totalAscent: totals.ascent,
-      totalDescent: totals.descent,
-      totalDistance: gpxData.totalDistance,
-      editedCount: editedPoints.size,
-      totalDurationMs,
-      averageSpeed,
-      maxSpeed: maxSegmentSpeed
-    };
-  }, [trackPoints, gpxData.totalDistance, editedPoints]);
-
-  const handleChartMouseDown = useCallback((e: any) => {
-    const activePoint = e?.activePayload?.[0]?.payload;
-
-    if (!activePoint) {
-      return;
-    }
-
-    const targetIndex = activePoint.originalIndex;
-    if (typeof targetIndex !== 'number' || targetIndex < 0 || targetIndex >= trackPoints.length) {
-      return;
-    }
-
-    const startY = typeof e?.chartY === 'number' ? e.chartY : 0;
-    const currentElevation = trackPoints[targetIndex]?.ele ?? activePoint.elevation ?? 0;
-
-    if (typeof window !== 'undefined') {
-      window.getSelection()?.removeAllRanges();
-    }
-
-    dragSnapshotRef.current = trackPoints.map(point => ({ ...point }));
-    setDragState({
-      index: targetIndex,
-      startY,
-      startElevation: currentElevation,
-      hasMoved: false
-    });
-  }, [trackPoints]);
-
-  const handleChartMouseMove = useCallback(
-    (e: any) => {
-      // Track hovered point for map marker (even when not dragging)
-      const activePoint = e?.activePayload?.[0]?.payload;
-      if (activePoint && typeof activePoint.originalIndex === 'number') {
-        setHoveredPointIndex(activePoint.originalIndex);
-      }
-
-      if (!dragState || !e || typeof e.chartY !== 'number') {
-        return;
-      }
-
-      const pixelDelta = dragState.startY - e.chartY;
-      if (!dragState.hasMoved && Math.abs(pixelDelta) < 2) {
-        return;
-      }
-
-      if (!dragSnapshotRef.current) {
-        dragSnapshotRef.current = trackPoints.map(point => ({ ...point }));
-      }
-
-      const snapshot = dragSnapshotRef.current;
-      if (!snapshot) {
-        return;
-      }
-
-      const chartHeight = e.chartHeight ?? 300;
-      const elevationRange = Math.max(stats.maxElevation - stats.minElevation, 1);
-      const metersPerPixel = elevationRange / Math.max(chartHeight, 1);
-      const elevationChange = pixelDelta * metersPerPixel;
-
-      const effectiveRadius = Math.max(0, Math.round(smoothingRadius));
-      const newElevation = dragState.startElevation + elevationChange;
-
-      if (!dragState.hasMoved) {
-        pushHistory();
-      }
-
-      const updatedPoints = applySmoothTransition(
-        snapshot,
-        dragState.index,
-        newElevation,
-        effectiveRadius,
-        smoothingStrength
-      );
-
-      setTrackPoints(updatedPoints);
-      dragSnapshotRef.current = updatedPoints;
-      setEditedPoints(prev => {
-        const next = new Set(prev);
-        for (let offset = -effectiveRadius; offset <= effectiveRadius; offset++) {
-          const affectedIndex = dragState.index + offset;
-          if (affectedIndex >= 0 && affectedIndex < updatedPoints.length) {
-            next.add(affectedIndex);
-          }
-        }
-        return next;
-      });
-
-      if (!dragState.hasMoved) {
-        setDragState(prev => (prev ? { ...prev, hasMoved: true } : prev));
-      }
-    },
-    [
-      dragState,
-      applySmoothTransition,
-      stats,
-      smoothingRadius,
-      smoothingStrength,
-      trackPoints,
-      pushHistory
-    ]
-  );
-
-  const completeDrag = useCallback(
-    (allowClickSmoothing: boolean) => {
-      if (!dragState) {
-        return;
-      }
-
-      const effectiveRadius = Math.max(0, Math.round(smoothingRadius));
-
-      if (!dragState.hasMoved && allowClickSmoothing && smoothingStrength > 0) {
-        const snapshot = dragSnapshotRef.current ?? trackPoints;
-        pushHistory();
-        const smoothedPoints = applyClickSmoothing(
-          snapshot,
-          dragState.index,
-          effectiveRadius,
-          smoothingStrength
-        );
-
-        setTrackPoints(smoothedPoints);
-        setEditedPoints(prev => {
-          const next = new Set(prev);
-          for (let offset = -effectiveRadius; offset <= effectiveRadius; offset++) {
-            const affectedIndex = dragState.index + offset;
-            if (affectedIndex >= 0 && affectedIndex < smoothedPoints.length) {
-              next.add(affectedIndex);
-            }
-          }
-          return next;
-        });
-      }
-
-      setDragState(null);
-      dragSnapshotRef.current = null;
-    },
-    [
-      dragState,
-      trackPoints,
-      smoothingRadius,
-      smoothingStrength,
-      applyClickSmoothing,
-      pushHistory
-    ]
-  );
-
-  const handleChartMouseUp = useCallback(() => {
-    completeDrag(true);
-  }, [completeDrag]);
-
-  const handleChartMouseLeave = useCallback(() => {
-    completeDrag(false);
-    setHoveredPointIndex(null);
-  }, [completeDrag]);
-
-  const animatePan = useCallback((targetMin: number, targetMax: number, duration: number = 300) => {
-    if (!zoomDomain) return;
-
-    // Cancel any ongoing animation
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    const startMin = zoomDomain[0];
-    const startMax = zoomDomain[1];
-    const startTime = performance.now();
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-
-      // Easing function for smooth animation (ease-out)
-      const eased = 1 - Math.pow(1 - progress, 3);
-
-      const currentMin = startMin + (targetMin - startMin) * eased;
-      const currentMax = startMax + (targetMax - startMax) * eased;
-
-      setZoomDomain([currentMin, currentMax]);
-
-      if (progress < 1) {
-        animationFrameRef.current = requestAnimationFrame(animate);
-      } else {
-        animationFrameRef.current = null;
-      }
-    };
-
-    animationFrameRef.current = requestAnimationFrame(animate);
-  }, [zoomDomain]);
-
-  const zoomIn = useCallback(() => {
-    const currentDomain = zoomDomain || [0, stats.totalDistance];
-    const [domainMin, domainMax] = currentDomain;
-    const domainRange = domainMax - domainMin;
-    const newRange = domainRange * 0.9; // Zoom in (90% of current range)
-
-    const center = (domainMin + domainMax) / 2;
-    const newMin = Math.max(0, center - newRange / 2);
-    const newMax = Math.min(stats.totalDistance, center + newRange / 2);
-
-    if (newMax - newMin > stats.totalDistance * 0.05) {
-      if (zoomDomain) {
-        animatePan(newMin, newMax);
-      } else {
-        setZoomDomain([newMin, newMax]);
-      }
-    }
-  }, [zoomDomain, stats.totalDistance, animatePan]);
-
-  const zoomOut = useCallback(() => {
-    const currentDomain = zoomDomain || [0, stats.totalDistance];
-    const [domainMin, domainMax] = currentDomain;
-    const domainRange = domainMax - domainMin;
-    const newRange = domainRange * 1.1; // Zoom out (110% of current range)
-
-    const center = (domainMin + domainMax) / 2;
-    const newMin = Math.max(0, center - newRange / 2);
-    const newMax = Math.min(stats.totalDistance, center + newRange / 2);
-
-    // Don't allow zooming out beyond original view
-    if (newMax - newMin >= stats.totalDistance) {
-      setZoomDomain(null);
-    } else {
-      if (zoomDomain) {
-        animatePan(newMin, newMax);
-      } else {
-        setZoomDomain([newMin, newMax]);
-      }
-    }
-  }, [zoomDomain, stats.totalDistance, animatePan]);
-
-  const resetZoom = useCallback(() => {
-    setZoomDomain(null);
-  }, []);
-
-  const panLeft = useCallback(() => {
-    if (!zoomDomain) return;
-    const [domainMin, domainMax] = zoomDomain;
-    const domainRange = domainMax - domainMin;
-    const panAmount = domainRange * 0.2; // Pan by 20% of visible range
-
-    let newMin = domainMin - panAmount;
-    let newMax = domainMax - panAmount;
-
-    // Prevent over-panning
-    if (newMin < 0) {
-      newMin = 0;
-      newMax = domainRange;
-    }
-
-    animatePan(newMin, newMax);
-  }, [zoomDomain, animatePan]);
-
-  const panRight = useCallback(() => {
-    if (!zoomDomain) return;
-    const [domainMin, domainMax] = zoomDomain;
-    const domainRange = domainMax - domainMin;
-    const panAmount = domainRange * 0.2; // Pan by 20% of visible range
-
-    let newMin = domainMin + panAmount;
-    let newMax = domainMax + panAmount;
-
-    // Prevent over-panning
-    if (newMax > stats.totalDistance) {
-      newMax = stats.totalDistance;
-      newMin = stats.totalDistance - domainRange;
-    }
-
-    animatePan(newMin, newMax);
-  }, [zoomDomain, stats.totalDistance, animatePan]);
-
-  const resetElevation = useCallback(() => {
-    if (editedPoints.size > 0) {
-      pushHistory();
-    }
-    setTrackPoints(gpxData.trackPoints);
-    setEditedPoints(new Set());
-    setIgnoredAnomalies(new Set());
-    setZoomDomain(null);
-    setDragState(null);
-    dragSnapshotRef.current = null;
-  }, [gpxData.trackPoints, editedPoints, pushHistory]);
-
-  const downloadModifiedGPX = useCallback(() => {
-    const modifiedGpxData = { ...gpxData, trackPoints };
-    const gpxContent = exportGPX(modifiedGpxData, originalContent);
-
-    const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename.replace('.gpx', '_edited.gpx');
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [gpxData, trackPoints, originalContent, filename]);
-
+  // ============================================================================
+  // File operations
+  // ============================================================================
   const handleLoadNewFile = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
 
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      if (content && onLoadNewFile) {
-        onLoadNewFile(content, file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content && onLoadNewFile) {
+          onLoadNewFile(content, file.name);
+        }
+      };
+      reader.readAsText(file);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
+    },
+    [onLoadNewFile]
+  );
+
+  const handleDownload = useCallback(() => {
+    const modifiedGPXData: GPXData = {
+      ...gpxData,
+      trackPoints: trackPoints
     };
-    reader.readAsText(file);
+    const modifiedGPX = exportGPX(modifiedGPXData, originalContent);
+    const blob = new Blob([modifiedGPX], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.replace(/\.gpx$/i, '_modified.gpx');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [trackPoints, gpxData, originalContent, filename]);
 
-    // Reset input to allow loading the same file again
-    event.target.value = '';
-  }, [onLoadNewFile]);
+  const handleReset = useCallback(() => {
+    if (window.confirm('Reset all changes? This cannot be undone.')) {
+      setTrackPoints(gpxData.trackPoints);
+      setEditedPoints(new Set());
+    }
+  }, [gpxData.trackPoints]);
 
+  // ============================================================================
+  // Other handlers
+  // ============================================================================
+  const handleIgnoreAnomaly = useCallback((index: number) => {
+    setIgnoredAnomalies((prev) => new Set(prev).add(index));
+  }, []);
+
+  const handleToggleMap = useCallback(() => {
+    setShowMap((prev) => {
+      if (!prev) {
+        setMapKey((k) => k + 1);
+      }
+      return !prev;
+    });
+  }, [setShowMap]);
+
+  // ============================================================================
+  // Render
+  // ============================================================================
   return (
-    <div className="w-full px-6 pb-6 space-y-6">
-      {/* Hidden file input */}
+    <div className="w-full space-y-4 md:space-y-6">
       <input
         ref={fileInputRef}
         type="file"
         accept=".gpx"
         onChange={handleFileChange}
         className="hidden"
+        aria-label="Upload GPX file"
       />
 
-      {/* Header */}
-      <div className="sticky top-0 z-50 bg-gray-50 pt-[10px] pb-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between -mx-6 px-6" style={{ marginTop: 0 }}>
-        <div>
-          <div className="flex items-center gap-2 md:gap-3">
-            <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-6 w-6 md:h-10 md:w-10" />
-            <h1 className="text-lg md:text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
-          </div>
-          <div className="mt-1 md:mt-2 flex items-center gap-1 md:gap-2 flex-wrap">
-            <span className="text-xs md:text-sm text-slate-600">Loaded GPX file:</span>
-            <Badge variant="secondary" className="font-mono text-xs md:text-sm">
-              {filename}
-            </Badge>
-            {gpxData.name && (
-              <>
-                <span className="text-xs md:text-sm text-slate-400 hidden md:inline">•</span>
-                <Badge variant="outline" className="text-xs md:text-sm hidden md:inline-flex">
-                  {gpxData.name}
-                </Badge>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={handleUndo} disabled={!canUndo} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
-            <Undo2 className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-            Undo
-          </Button>
-          <Button variant="outline" onClick={resetElevation} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
-            <RotateCcw className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-            Reset
-          </Button>
-          <Button className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm" onClick={handleLoadNewFile}>
-            <Upload className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-            Load GPX
-          </Button>
-          <Button onClick={downloadModifiedGPX} className="h-8 px-2 text-xs md:h-10 md:px-4 md:text-sm">
-            <Download className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-            Download
-          </Button>
-        </div>
-      </div>
+      <Header
+        filename={filename}
+        gpxName={gpxData.name}
+        canUndo={canUndo}
+        onUndo={handleUndo}
+        onReset={handleReset}
+        onLoadNewFile={handleLoadNewFile}
+        onDownload={handleDownload}
+      />
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 md:gap-4">
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Distance</div>
-          <div className="text-sm md:text-lg font-bold">
-            {convertDistance(stats.totalDistance).toFixed(1)} {distanceUnitLabel}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Lowest Point</div>
-          <div className="text-sm md:text-lg font-bold">
-            {Math.round(convertElevation(stats.minElevation))} {elevationUnitLabel}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Highest Point</div>
-          <div className="text-sm md:text-lg font-bold">
-            {Math.round(convertElevation(stats.maxElevation))} {elevationUnitLabel}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Total Ascent</div>
-          <div className="text-sm md:text-lg font-bold">
-            {Math.round(convertElevation(stats.totalAscent))} {elevationUnitLabel}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Total Descent</div>
-          <div className="text-sm md:text-lg font-bold">
-            {Math.round(convertElevation(stats.totalDescent))} {elevationUnitLabel}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Total Time</div>
-          <div className="text-sm md:text-lg font-bold">
-            {stats.totalDurationMs && stats.totalDurationMs > 0
-              ? formatDuration(stats.totalDurationMs)
-              : '—'}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Avg Speed</div>
-          <div className="text-sm md:text-lg font-bold">
-            {stats.averageSpeed != null
-              ? `${convertSpeed(stats.averageSpeed).toFixed(1)} ${speedUnitLabel}`
-              : '—'}
-          </div>
-        </Card>
-        <Card className="p-2 md:p-4">
-          <div className="text-xs md:text-sm text-slate-600">Max Speed</div>
-          <div className="text-sm md:text-lg font-bold">
-            {stats.maxSpeed != null
-              ? `${convertSpeed(stats.maxSpeed).toFixed(1)} ${speedUnitLabel}`
-              : '—'}
-          </div>
-        </Card>
-      </div>
+      <StatsGrid
+        stats={stats}
+        convertDistance={convertDistance}
+        convertElevation={convertElevation}
+        convertSpeed={convertSpeed}
+        distanceUnitLabel={distanceUnitLabel}
+        elevationUnitLabel={elevationUnitLabel}
+        speedUnitLabel={speedUnitLabel}
+      />
 
-      {/* Help Card */}
-      {showHelpCard && (
-        <Card className="bg-blue-50 border-blue-200 relative">
-          <CardContent className="p-4">
-            <button
-              type="button"
-              aria-label="Dismiss editing help"
-              onClick={() => {
-                setShowHelpCard(false);
-                localStorage.setItem('elevationEditor.showHelpCard', 'false');
-              }}
-              className="absolute top-2 right-2 text-blue-500 transition-colors hover:bg-blue-500 hover:text-white rounded-full border border-blue-200"
-              style={{ margin: '5px', padding: '0px 6px' }}
-            >
-              ×
-            </button>
-            <div className="flex items-start gap-3 pr-6">
-              <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-              <div className="text-sm text-blue-800">
-                <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Nearby samples follow according to the smoothing radius and intensity sliders. Clicking once without dragging runs the click-smoothing blend with your current settings.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <HelpCard show={showHelpCard} onDismiss={() => setShowHelpCard(false)} />
 
-      {/* Smoothing Controls */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Controls</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
-                  Smoothing affected points (each side)
-                </Label>
-                <span className="text-sm text-slate-600">{Math.round(smoothingRadius)} pts</span>
-              </div>
-              <Slider
-                id="smoothing-radius"
-                min={0}
-                max={Math.max(0, maxSmoothingRadius)}
-                step={1}
-                value={[Math.max(0, Math.min(Math.round(smoothingRadius), maxSmoothingRadius))]}
-                onValueChange={(value: number[]) => {
-                  const raw = value[0] ?? 0;
-                  setSmoothingRadius(Math.max(0, Math.min(raw, maxSmoothingRadius)));
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="smoothing-strength" className="text-sm text-slate-600">
-                  Smoothing intensity
-                </Label>
-                <span className="text-sm text-slate-600">{Math.round(smoothingStrength * 100)}%</span>
-              </div>
-              <Slider
-                id="smoothing-strength"
-                min={0}
-                max={100}
-                step={5}
-                value={[Math.round(smoothingStrength * 100)]}
-                onValueChange={(value: number[]) => {
-                  const next = (value[0] ?? 0) / 100;
-                  setSmoothingStrength(Math.min(Math.max(next, 0), 1));
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600">
-                  Anomaly detection threshold (1-100 m)
-                </Label>
-                <span className="text-sm text-slate-600">{anomalyThreshold} m</span>
-              </div>
-              <Slider
-                id="anomaly-threshold"
-                min={1}
-                max={150}
-                step={1}
-                value={[anomalyThreshold]}
-                onValueChange={(value: number[]) => {
-                  const nextValue = value[0] ?? anomalyThreshold;
-                  setAnomalyThreshold(Math.min(Math.max(nextValue, 1), 100));
-                }}
-              />
-            </div>
-          </div>
-          <p className="text-xs text-slate-500">
-            Dragging uses smoothing settings to blend the selected point with its neighbours. Clicking without
-            moving applies a gentle average using the same radius and intensity. Anomaly threshold controls the
-            minimum elevation change (in meters) required to detect elevation anomalies.
-          </p>
-        </CardContent>
-      </Card>
+      <ControlsCard
+        smoothingRadius={smoothingRadius}
+        smoothingStrength={smoothingStrength}
+        anomalyThreshold={anomalyThreshold}
+        maxSmoothingRadius={maxSmoothingRadius}
+        onSmoothingRadiusChange={setSmoothingRadius}
+        onSmoothingStrengthChange={setSmoothingStrength}
+        onAnomalyThresholdChange={setAnomalyThreshold}
+      />
 
-      {/* Elevation Chart */}
-      <Card>
-        <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <CardTitle>Elevation Profile</CardTitle>
-            {showAnomalies && anomalyRegions.length > 0 && (
-              <Badge
-                variant="outline"
-                className="bg-red-100 text-red-800 border-transparent hover:bg-red-100 pointer-events-none"
-              >
-                {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
-              </Badge>
-            )}
-            {stats.editedCount > 0 && (
-              <Badge className="bg-amber-100 text-amber-800 border-transparent pointer-events-none">
-                {stats.editedCount} points modified
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-1 md:gap-2 flex-wrap">
-            <div className="flex overflow-hidden rounded-md border border-slate-200">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={`rounded-none h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
-                  unitSystem === 'metric'
-                    ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
-                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                }`}
-                onClick={() => setUnitSystem('metric')}
-              >
-                Metric
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={`rounded-none h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
-                  unitSystem === 'imperial'
-                    ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
-                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                }`}
-                onClick={() => setUnitSystem('imperial')}
-              >
-                Imperial
-              </Button>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
-                showOriginal
-                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              }`}
-              onClick={() => setShowOriginal(prev => !prev)}
-            >
-              {showOriginal ? (
-                <>
-                  <Eye className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-                  Hide original
-                </>
-              ) : (
-                <>
-                  <EyeOff className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-                  Show original
-                </>
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
-                !showAnomalies
-                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              }`}
-              onClick={() => setShowAnomalies(prev => !prev)}
-            >
-              {showAnomalies ? (
-                <>
-                  <Eye className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-                  Hide anomalies
-                </>
-              ) : (
-                <>
-                  <EyeOff className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-                  Show anomalies
-                </>
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 px-2 text-xs md:h-9 md:px-3 md:text-sm ${
-                !showMap
-                  ? 'bg-slate-900 !text-white hover:bg-slate-800 focus-visible:!text-white active:!text-white'
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              }`}
-              onClick={() => {
-                setShowMap(prev => {
-                  if (!prev) {
-                    // When showing the map, increment the key to force a fresh instance
-                    setMapKey(k => k + 1);
-                  }
-                  return !prev;
-                });
-              }}
-            >
-              <MapIcon className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-              {showMap ? 'Hide map' : 'Show path on map'}
-            </Button>
-          </div>
-        </CardHeader>
-        {isMobile && showMobileWarning && (
-          <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg relative">
-            <button
-              onClick={() => {
-                setShowMobileWarning(false);
-                localStorage.setItem('elevationEditor.showMobileWarning', 'false');
-              }}
-              className="absolute top-2 right-2 text-amber-600 hover:text-amber-800 transition-colors"
-              aria-label="Close warning"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <div className="flex gap-2 items-start pr-6">
-              <span className="text-amber-600 text-lg">⚠️</span>
-              <div className="text-sm text-amber-800">
-                <strong>Best used on desktop</strong> - This tool works best on larger screens. Editing elevation curves on mobile is difficult due to limited space.
-              </div>
-            </div>
-          </div>
-        )}
-        <CardContent>
-          <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
-            <div className="select-none relative">
-              {/* Zoom controls overlay - left top */}
-              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: isMobile ? '-43px' : '127px', top: '15px', background: 'white' }}>
-                <Button variant="ghost" size="icon" onClick={zoomIn} title="Zoom in" className="h-8 w-8 hover:bg-slate-100">
-                  <ZoomIn className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={zoomOut} title="Zoom out" className="h-8 w-8 hover:bg-slate-100">
-                  <ZoomOut className="h-4 w-4" />
-                </Button>
-                {zoomDomain && (
-                  <Button variant="ghost" size="icon" onClick={resetZoom} title="Reset zoom" className="h-8 w-8 hover:bg-slate-100">
-                    <RotateCcw className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-
-              {/* Pan controls overlay - right top */}
-              {zoomDomain && (
-                <div className="absolute top-4 z-10 flex gap-1 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-md p-1 shadow-lg" style={{ right: isMobile ? '-43px' : '16px' }}>
-                  <Button variant="ghost" size="icon" onClick={panLeft} title="Pan left" className="h-8 w-8 hover:bg-slate-100">
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={panRight} title="Pan right" className="h-8 w-8 hover:bg-slate-100">
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-
-              <div className="h-96 w-full relative" style={{ minHeight: '384px' }} ref={chartContainerRef}>
-                {/* Anomaly close buttons overlay */}
-                {showAnomalies && anomalyRegions.length > 0 && chartContainerRef.current && (
-                  <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-                    {anomalyRegions.map((region, index) => {
-                      const offsets = anomalyButtonOffsets[index];
-                      if (!offsets) {
-                        return null;
-                      }
-
-                      return (
-                        <button
-                          key={`close-${index}`}
-                          onClick={() => handleIgnoreAnomaly(index)}
-                          onMouseEnter={() => setHoveredAnomalyIndex(index)}
-                          onMouseLeave={() => setHoveredAnomalyIndex(null)}
-                          className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
-                          style={{
-                            top: 0,
-                            right: offsets.right
-                          }}
-                          title="Ignore this anomaly"
-                        >
-                          ×
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                <ResponsiveContainer width="100%" height="100%" debounce={50}>
-                  <LineChart
-                    data={chartData}
-                    margin={isMobile ? CHART_MARGINS_MOBILE : CHART_MARGINS_DESKTOP}
-                    onMouseDown={handleChartMouseDown}
-                    onMouseMove={handleChartMouseMove}
-                    onMouseUp={handleChartMouseUp}
-                    onMouseLeave={handleChartMouseLeave}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis
-                      dataKey="distance"
-                      type="number"
-                      domain={zoomDomain || [0, 'dataMax']}
-                      allowDataOverflow={true}
-                      tickCount={15}
-                      interval="preserveStartEnd"
-                      tickFormatter={(value) => {
-                        const distance = convertDistance(value);
-                        return distance >= 10 ? distance.toFixed(0) : distance.toFixed(1);
-                      }}
-                      stroke="#64748b"
-                      tick={{ fontSize: isMobile ? 10 : 12 }}
-                    />
-                    <YAxis
-                      domain={[stats.minElevation - 100, stats.maxElevation + 100]}
-                      allowDataOverflow={true}
-                      tickCount={10}
-                      tickFormatter={(value) => {
-                        const elevation = convertElevation(value);
-                        return `${Math.round(elevation)}${elevationUnitLabel}`;
-                      }}
-                      stroke="#64748b"
-                      tick={{ fontSize: isMobile ? 10 : 12 }}
-                      width={isMobile ? 35 : 60}
-                    />
-                    <Tooltip
-                      formatter={(value: number, name: string) => {
-                        const numericValue = typeof value === 'number' ? value : Number(value);
-                        const formatted = convertElevation(numericValue);
-                        const displayName = name === 'Original' ? 'Original' : 'Edited';
-                        return [`${formatted.toFixed(1)} ${elevationUnitLabel}`, displayName];
-                      }}
-                      labelFormatter={(value: number) => {
-                        const numericValue = typeof value === 'number' ? value : Number(value);
-                        const formattedDistance = convertDistance(numericValue);
-                        return `Distance: ${formattedDistance.toFixed(2)} ${distanceUnitLabel}`;
-                      }}
-                      contentStyle={{
-                        backgroundColor: 'white',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: isMobile ? '4px' : '8px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                        padding: isMobile ? '4px 6px' : '10px',
-                        fontSize: isMobile ? '10px' : '14px'
-                      }}
-                      labelStyle={{
-                        fontSize: isMobile ? '10px' : '14px',
-                        marginBottom: isMobile ? '2px' : '4px'
-                      }}
-                      itemStyle={{
-                        fontSize: isMobile ? '10px' : '13px',
-                        padding: isMobile ? '1px 0' : '2px 0'
-                      }}
-                    />
-                    {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
-                    {showAnomalies && anomalyRegions.length > 0 && console.log('Rendering', anomalyRegions.length, 'anomaly regions')}
-                    {showAnomalies && anomalyRegions.map((region, index) => {
-                      console.log(`Rendering ReferenceArea ${index}:`, {
-                        x1: region.startDistance,
-                        x2: region.endDistance,
-                        opacity: Math.min(0.4 + region.severity * 0.1, 0.8)
-                      });
-                      return (
-                        <ReferenceArea
-                          key={`anomaly-${index}`}
-                          className={`anomaly-area anomaly-area-${index}`}
-                          x1={region.startDistance}
-                          x2={region.endDistance}
-                          fill="#ff0000"
-                          fillOpacity={hoveredAnomalyIndex === index ? 0.4 : 0.2}
-                          ifOverflow="visible"
-                        />
-                      );
-                    })}
-                    <Line
-                      type="monotone"
-                      dataKey="elevation"
-                      stroke="#2563eb"
-                      strokeWidth={2}
-                      dot={false}
-                      name="Edited"
-                      isAnimationActive={false}
-                      activeDot={{
-                        r: 6,
-                        fill: '#f59e0b',
-                        stroke: '#ffffff',
-                        strokeWidth: 2,
-                        cursor: 'ns-resize'
-                      }}
-                    />
-                    {showOriginal && (
-                      <Line
-                        type="monotone"
-                        data={originalChartData}
-                        dataKey="elevation"
-                        stroke="#94a3b8"
-                        strokeWidth={1.5}
-                        dot={false}
-                        isAnimationActive={false}
-                        strokeDasharray="4 4"
-                        name="Original"
-                      />
-                    )}
-                    {/* Reference lines for edited points */}
-                    {Array.from(editedPoints).slice(0, 5).map(index => (
-                      <ReferenceLine
-                        key={index}
-                        x={trackPoints[index]?.distance || 0}
-                        stroke="#f59e0b"
-                        strokeDasharray="2 2"
-                        strokeOpacity={0.5}
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-2 text-center text-xs text-slate-500">
-                Distance ({distanceUnitLabel})
-              </div>
-            </div>
-            {showMap && (
-              <div
-                className="flex flex-col gap-2"
-                key={`map-container-${mapKey}`}
-                style={{ isolation: 'isolate' }}
-              >
-                <ElevationMap
-                  key={`elevation-map-${mapKey}`}
-                  points={trackPoints}
-                  hoveredPointIndex={hoveredPointIndex}
-                />
-               
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <ChartCard
+        chartData={chartData}
+        originalChartData={originalChartData}
+        trackPoints={trackPoints}
+        stats={stats}
+        editedPoints={editedPoints}
+        isMobile={isMobile}
+        unitSystem={unitSystem}
+        showOriginal={showOriginal}
+        showAnomalies={showAnomalies}
+        showMap={showMap}
+        showMobileWarning={showMobileWarning}
+        zoomDomain={zoomDomain}
+        anomalyRegions={anomalyRegions}
+        anomalyButtonOffsets={anomalyButtonOffsets}
+        hoveredPointIndex={hoveredPointIndex}
+        hoveredAnomalyIndex={null}
+        mapKey={mapKey}
+        chartContainerRef={chartContainerRef}
+        convertDistance={convertDistance}
+        convertElevation={convertElevation}
+        distanceUnitLabel={distanceUnitLabel}
+        elevationUnitLabel={elevationUnitLabel}
+        onUnitSystemChange={setUnitSystem}
+        onToggleOriginal={() => setShowOriginal((prev) => !prev)}
+        onToggleAnomalies={() => setShowAnomalies((prev) => !prev)}
+        onToggleMap={handleToggleMap}
+        onDismissMobileWarning={() => setShowMobileWarning(false)}
+        onChartMouseDown={handleChartMouseDown}
+        onChartMouseMove={handleChartMouseMove}
+        onChartMouseUp={handleChartMouseUp}
+        onChartMouseLeave={handleChartMouseLeave}
+        onIgnoreAnomaly={handleIgnoreAnomaly}
+        onHoverAnomalyChange={() => {}}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onResetZoom={resetZoom}
+        onPanLeft={panLeft}
+        onPanRight={panRight}
+      />
     </div>
   );
 }
