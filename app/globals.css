@@ -90,3 +90,16 @@ body > nextjs-portal {
 .dark line.recharts-grid {
   stroke: #334155 !important;
 }
+
+/* Panning mode cursor */
+.panning-mode .recharts-wrapper,
+.panning-mode .recharts-surface,
+.panning-mode .recharts-layer {
+  cursor: grab !important;
+}
+
+.panning-mode.dragging .recharts-wrapper,
+.panning-mode.dragging .recharts-surface,
+.panning-mode.dragging .recharts-layer {
+  cursor: grabbing !important;
+}

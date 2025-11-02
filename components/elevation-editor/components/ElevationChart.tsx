@@ -33,18 +33,20 @@ interface ElevationChartProps {
   anomalyRegions: AnomalyRegion[];
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
   gridBounds: { top: number; left: number; width: number; height: number } | null;
-  hoveredAnomalyIndex: number | null;
+  hoveredAnomalyKey: string | null;
   chartContainerRef: React.RefObject<HTMLDivElement | null>;
+  isPanningMode: boolean;
   convertDistance: (meters: number) => number;
   convertElevation: (meters: number) => number;
   distanceUnitLabel: string;
   elevationUnitLabel: string;
+  getAnomalyKey: (region: { startDistance: number; endDistance: number }) => string;
   onChartMouseDown: (e: any) => void;
   onChartMouseMove: (e: any) => void;
   onChartMouseUp: () => void;
   onChartMouseLeave: () => void;
-  onIgnoreAnomaly: (index: number) => void;
-  onHoverAnomalyChange: (index: number | null) => void;
+  onIgnoreAnomaly: (key: string) => void;
+  onHoverAnomalyChange: (key: string | null) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
@@ -68,12 +70,14 @@ export function ElevationChart({
   anomalyRegions,
   anomalyButtonOffsets,
   gridBounds,
-  hoveredAnomalyIndex,
+  hoveredAnomalyKey,
   chartContainerRef,
+  isPanningMode,
   convertDistance,
   convertElevation,
   distanceUnitLabel,
   elevationUnitLabel,
+  getAnomalyKey,
   onChartMouseDown,
   onChartMouseMove,
   onChartMouseUp,
@@ -91,7 +95,9 @@ export function ElevationChart({
     ? anomalyRegions.filter(region => {
         const [domainMin, domainMax] = zoomDomain;
         // Show anomaly if any part of it is visible in the domain
-        return region.endDistance >= domainMin && region.startDistance <= domainMax;
+        // Left margin: hide anomaly 40m earlier when scrolling left
+        const MARGIN_LEFT = 100; // meters
+        return region.endDistance >= (domainMin + MARGIN_LEFT) && region.startDistance <= domainMax;
       })
     : anomalyRegions;
 
@@ -108,14 +114,19 @@ export function ElevationChart({
         onPanRight={onPanRight}
       />
 
-      <div className="h-96 w-full relative overflow-hidden" style={{ minHeight: '384px' }} ref={chartContainerRef}>
+      <div
+        className={`h-96 w-full relative overflow-hidden ${isPanningMode ? 'panning-mode' : ''}`}
+        style={{ minHeight: '384px' }}
+        ref={chartContainerRef}
+      >
         {/* Anomaly close buttons overlay */}
         <AnomalyCloseButtons
           show={showAnomalies}
           anomalyRegions={visibleAnomalyRegions}
           allAnomalyRegions={anomalyRegions}
           anomalyButtonOffsets={anomalyButtonOffsets}
-          hoveredAnomalyIndex={hoveredAnomalyIndex}
+          hoveredAnomalyKey={hoveredAnomalyKey}
+          getAnomalyKey={getAnomalyKey}
           onIgnoreAnomaly={onIgnoreAnomaly}
           onHoverChange={onHoverAnomalyChange}
           gridBounds={gridBounds}
@@ -172,12 +183,14 @@ export function ElevationChart({
             {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
             {showAnomalies &&
               visibleAnomalyRegions.map((region) => {
-                const originalIndex = anomalyRegions.indexOf(region);
-                const opacity = hoveredAnomalyIndex === originalIndex ? 0.4 : 0.2;
+                const anomalyKey = getAnomalyKey(region);
+                const opacity = hoveredAnomalyKey === anomalyKey ? 0.4 : 0.2;
+                // Find index in full anomalyRegions array for offset lookup
+                const fullIndex = anomalyRegions.findIndex(r => getAnomalyKey(r) === anomalyKey);
                 return (
                   <ReferenceArea
-                    key={`anomaly-${originalIndex}`}
-                    className={`anomaly-area anomaly-area-${originalIndex}`}
+                    key={`anomaly-${anomalyKey}`}
+                    className={`anomaly-area anomaly-area-${fullIndex}`}
                     x1={region.startDistance}
                     x2={region.endDistance}
                     fill="#ff0000"
@@ -217,19 +230,6 @@ export function ElevationChart({
                 name="Original"
               />
             )}
-
-            {/* Reference lines for edited points */}
-            {Array.from(editedPoints)
-              .slice(0, 5)
-              .map((index) => (
-                <ReferenceLine
-                  key={index}
-                  x={trackPoints[index]?.distance || 0}
-                  stroke="#f59e0b"
-                  strokeDasharray="2 2"
-                  strokeOpacity={0.5}
-                />
-              ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
