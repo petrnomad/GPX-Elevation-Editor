@@ -613,13 +613,28 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
     });
   }, [setTrackPoints, setEditedPoints, setDragState]);
 
+  // Keyboard shortcut for undo (Ctrl+Z / Cmd+Z)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleUndo]);
+
   const stats = useMemo(() => {
     console.log('Calculating stats for', trackPoints.length, 'points');
     const rawElevations = trackPoints.map(point => point.ele);
     const smoothedElevations = computeRollingMedian(rawElevations, MEDIAN_WINDOW_SIZE);
 
-    const minEle = Math.min(...smoothedElevations);
-    const maxEle = Math.max(...smoothedElevations);
+    const minEle = Math.min(...rawElevations);
+    const maxEle = Math.max(...rawElevations);
     const totals = smoothedElevations.reduce(
       (acc, elevation, index) => {
         if (index === 0) {
@@ -978,6 +993,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
     }
     setTrackPoints(gpxData.trackPoints);
     setEditedPoints(new Set());
+    setIgnoredAnomalies(new Set());
     setDragState(null);
     dragSnapshotRef.current = null;
   }, [gpxData.trackPoints, editedPoints, pushHistory]);
@@ -1030,7 +1046,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       />
 
       {/* Header */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="sticky top-0 z-10 bg-gray-50 py-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-3">
             <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-10 w-10" />
@@ -1320,11 +1336,21 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             </Button>
           </div>
         </CardHeader>
+        {isMobile && (
+          <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex gap-2 items-start">
+              <span className="text-amber-600 text-lg">⚠️</span>
+              <div className="text-sm text-amber-800">
+                <strong>Best used on desktop</strong> - This tool works best on larger screens. Editing elevation curves on mobile is difficult due to limited space.
+              </div>
+            </div>
+          </div>
+        )}
         <CardContent>
           <div className={showMap ? 'grid gap-4 lg:grid-cols-2' : ''}>
             <div className="select-none relative">
               {/* Zoom controls overlay - left top */}
-              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: '127px', top: '15px', background: 'white' }}>
+              <div className="absolute z-10 flex flex-col gap-1 border border-slate-200 rounded-md p-1 shadow-lg" style={{ left: isMobile ? '0px' : '127px', top: '15px', background: 'white' }}>
                 <Button variant="ghost" size="icon" onClick={zoomIn} title="Zoom in" className="h-8 w-8 hover:bg-slate-100">
                   <ZoomIn className="h-4 w-4" />
                 </Button>
@@ -1403,7 +1429,9 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                       stroke="#64748b"
                     />
                     <YAxis
+                      domain={[stats.minElevation - 100, stats.maxElevation + 100]}
                       allowDataOverflow={true}
+                      tickCount={10}
                       tickFormatter={(value) => {
                         const elevation = convertElevation(value);
                         return `${Math.round(elevation)}${elevationUnitLabel}`;
