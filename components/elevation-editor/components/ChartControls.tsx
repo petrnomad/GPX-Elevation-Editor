@@ -145,7 +145,7 @@ export function ChartControls({
           onClick={onToggleMap}
         >
           <MapIcon className="h-3 w-3 mr-1 md:h-4 md:w-4 md:mr-2" />
-          {showMap ? 'Hide map' : 'Show path on map'}
+          {showMap ? 'Hide map' : 'Show map'}
         </Button>
       </div>
     </div>

@@ -2,9 +2,15 @@
  * Controls card component with smoothing and anomaly settings
  */
 
+'use client';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChevronDown } from 'lucide-react';
+import { useLocalStorageState } from '../hooks/useLocalStorageState';
+import { cn } from '@/lib/utils';
 
 interface ControlsCardProps {
   smoothingRadius: number;
@@ -28,12 +34,29 @@ export function ControlsCard({
   onSmoothingStrengthChange,
   onAnomalyThresholdChange
 }: ControlsCardProps) {
+  const [isOpen, setIsOpen] = useLocalStorageState('controls-card-open', true);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Controls</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Card>
+        <CollapsibleTrigger asChild>
+          <CardHeader className={cn(
+            "cursor-pointer hover:bg-slate-50 transition-colors",
+            !isOpen && "p-[15px]"
+          )}>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">Controls</CardTitle>
+              <ChevronDown
+                className={cn(
+                  "h-5 w-5 text-slate-600 transition-transform duration-200",
+                  isOpen && "rotate-180"
+                )}
+              />
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Smoothing Radius */}
           <div className="space-y-2">
@@ -90,7 +113,7 @@ export function ControlsCard({
             <Slider
               id="anomaly-threshold"
               min={1}
-              max={150}
+              max={100}
               step={1}
               value={[anomalyThreshold]}
               onValueChange={(value: number[]) => {
@@ -106,7 +129,9 @@ export function ControlsCard({
           Anomaly threshold controls the minimum elevation change (in meters) required to detect
           elevation anomalies.
         </p>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
