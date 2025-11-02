@@ -11,6 +11,7 @@
 # next.js
 /.next/
 /out/
+/.preview/
 
 # production
 /build
@@ -33,6 +34,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# tauri
-/src-tauri/target

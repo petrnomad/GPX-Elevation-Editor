@@ -37,7 +37,8 @@ interface ChartDataPoint {
 const HISTORY_LIMIT = 100;
 const ELEVATION_STEP_THRESHOLD = 2.5; // ignore sub-threshold steps when aggregating gain/loss
 const MEDIAN_WINDOW_SIZE = 3; // 3-point rolling median (one neighbour each side)
-const CHART_MARGINS = { top: 10, right: 30, bottom: 30, left: 60 } as const;
+const CHART_MARGINS_DESKTOP = { top: 10, right: 30, bottom: 30, left: 60 } as const;
+const CHART_MARGINS_MOBILE = { top: 10, right: 10, bottom: 30, left: 40 } as const;
 const ANOMALY_BUTTON_SIZE = 20;
 const ANOMALY_BUTTON_PADDING = 4;
 
@@ -252,6 +253,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
   const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, { top: number; right: number }>>({});
   const [showHelpCard, setShowHelpCard] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
   const animationFrameRef = useRef<number | null>(null);
   const maxSmoothingRadius = useMemo(
     () => Math.max(0, Math.min(200, Math.floor(trackPoints.length / 8))),
@@ -263,6 +265,20 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   useEffect(() => {
     setSmoothingRadius(prev => Math.max(0, Math.min(prev, maxSmoothingRadius)));
   }, [maxSmoothingRadius]);
+
+  // Detect mobile screen size
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -1006,12 +1022,15 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
+          <div className="flex items-center gap-3">
+            <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-10 w-10" />
+            <h1 className="text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
+          </div>
           <p className="text-slate-600 mt-1">{filename}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={handleUndo} disabled={!canUndo}>
             <Undo2 className="h-4 w-4 mr-2" />
             Undo
@@ -1032,7 +1051,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
         <Card className="p-4">
           <div className="text-sm text-slate-600">Distance</div>
           <div className="text-lg font-bold">
@@ -1062,10 +1081,6 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
           <div className="text-lg font-bold">
             {Math.round(convertElevation(stats.totalDescent))} {elevationUnitLabel}
           </div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-slate-600">Edited Points</div>
-          <div className="text-lg font-bold text-amber-600">{stats.editedCount}</div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-slate-600">Total Time</div>
@@ -1110,13 +1125,6 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
               <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
               <div className="text-sm text-blue-800">
                 <strong>How to edit:</strong> Drag a point up or down to reshape the profile. Nearby samples follow according to the smoothing radius and intensity sliders. Clicking once without dragging runs the click-smoothing blend with your current settings.
-                {stats.editedCount > 0 && (
-                  <span className="ml-2">
-                    <Badge className="bg-amber-100 text-amber-800 border-transparent">
-                      {stats.editedCount} points modified
-                    </Badge>
-                  </span>
-                )}
               </div>
             </div>
           </CardContent>
@@ -1199,7 +1207,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
       {/* Elevation Chart */}
       <Card>
         <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <CardTitle>Elevation Profile</CardTitle>
             {anomalyRegions.length > 0 && (
               <Badge
@@ -1209,8 +1217,13 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 {anomalyRegions.length} elevation {anomalyRegions.length === 1 ? 'anomaly' : 'anomalies'} detected
               </Badge>
             )}
+            {stats.editedCount > 0 && (
+              <Badge className="bg-amber-100 text-amber-800 border-transparent pointer-events-none">
+                {stats.editedCount} points modified
+              </Badge>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="flex overflow-hidden rounded-md border border-slate-200">
               <Button
                 type="button"
@@ -1330,7 +1343,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                 <ResponsiveContainer width="100%" height="100%" debounce={50}>
                   <LineChart
                     data={chartData}
-                    margin={CHART_MARGINS}
+                    margin={isMobile ? CHART_MARGINS_MOBILE : CHART_MARGINS_DESKTOP}
                     onMouseDown={handleChartMouseDown}
                     onMouseMove={handleChartMouseMove}
                     onMouseUp={handleChartMouseUp}
@@ -1357,6 +1370,8 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                         return `${Math.round(elevation)}${elevationUnitLabel}`;
                       }}
                       stroke="#64748b"
+                      tick={{ fontSize: isMobile ? 10 : 12 }}
+                      width={isMobile ? 35 : 60}
                     />
                     <Tooltip
                       formatter={(value: number, name: string) => {

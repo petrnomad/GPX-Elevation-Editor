@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ElevationEditor } from '@/components/elevation-editor';
+import { Footer } from '@/components/footer';
 import { parseGPX, GPXData } from '@/lib/gpx-parser';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
@@ -18,7 +19,8 @@ export default function Home() {
   useEffect(() => {
     const loadSampleGPX = async () => {
       try {
-        const response = await fetch('/sample.gpx');
+        // Use relative path - works in both dev and production with basePath
+        const response = await fetch('./sample.gpx');
         const content = await response.text();
         const parsed = parseGPX(content);
 
@@ -65,17 +67,20 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <Toaster />
-      {gpxData && (
-        <ElevationEditor
-          key={filename}
-          gpxData={gpxData}
-          originalContent={originalContent}
-          filename={filename}
-          onLoadNewFile={handleFileUpload}
-        />
-      )}
+      <div className="flex-1">
+        {gpxData && (
+          <ElevationEditor
+            key={filename}
+            gpxData={gpxData}
+            originalContent={originalContent}
+            filename={filename}
+            onLoadNewFile={handleFileUpload}
+          />
+        )}
+      </div>
+      <Footer />
     </div>
   );
 }

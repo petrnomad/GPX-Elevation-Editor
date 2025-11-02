@@ -8,8 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "export": "next build",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "preview": "node preview-server.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",
@@ -69,7 +68,6 @@
   "devDependencies": {
     "@babel/eslint-parser": "^7.27.1",
     "@eslint/eslintrc": "^3",
-    "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^20",
@@ -80,6 +78,7 @@
     "eslint-config-next": "15.2.4",
     "jsdom": "^26.0.0",
     "postcss": "^8.5.3",
+    "serve": "^14.2.5",
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5",
