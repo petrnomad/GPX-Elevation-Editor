@@ -4,6 +4,8 @@
 
 **A powerful, browser-based GPX elevation profile editor with anomaly detection and advanced smoothing capabilities**
 
+### 🚀 [**Try it now at elevationeditor.com**](https://elevationeditor.com) 🚀
+
 [![Next.js](https://img.shields.io/badge/Next.js-15-black)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb)](https://reactjs.org/)
