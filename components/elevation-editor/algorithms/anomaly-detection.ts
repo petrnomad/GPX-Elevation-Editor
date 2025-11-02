@@ -17,7 +17,6 @@ import { AnomalyRegion } from '../types';
  */
 export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: number): AnomalyRegion[] => {
   if (trackPoints.length < 10) {
-    console.log('Not enough points for anomaly detection:', trackPoints.length);
     return [];
   }
 
@@ -36,8 +35,6 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
   // Calculate average gradient
   const avgGradient = gradients.reduce((sum, g) => sum + g, 0) / gradients.length;
   const gradientThreshold = Math.max(avgGradient * 3, 0.05); // 3x average or minimum 5% grade
-
-  console.log(`Average gradient: ${(avgGradient * 100).toFixed(2)}%, threshold: ${(gradientThreshold * 100).toFixed(2)}%`);
 
   // Also check for absolute elevation changes (detect sudden jumps)
   const elevationChanges: number[] = [];
@@ -64,16 +61,6 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
     }
   }
 
-  const steepCount = isSteep.filter(s => s).length;
-  console.log(`Found ${steepCount} steep points out of ${trackPoints.length} total points`);
-
-  // Log steep points
-  isSteep.forEach((steep, i) => {
-    if (steep && i > 0) {
-      const elevChange = i - 1 < elevationChanges.length ? elevationChanges[i - 1] : 0;
-      console.log(`Steep section at index ${i}, distance: ${(distances[i] / 1000).toFixed(3)}km, elevation: ${elevations[i]}m, gradient: ${(gradients[i - 1] * 100).toFixed(2)}%, elev change: ${elevChange.toFixed(1)}m`);
-    }
-  });
 
   // Group steep sections into anomaly regions
   const regions: AnomalyRegion[] = [];
@@ -111,12 +98,6 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
         regionEnd = Math.min(trackPoints.length - 1, regionEnd! + 1);
 
         if (steepPointsInRegion >= 3) { // At least 3 steep points (increased from 2)
-          const region = {
-            startDistance: distances[regionStart] / 1000,
-            endDistance: distances[regionEnd] / 1000,
-            severity: maxSeverity
-          };
-          console.log(`Steep region: ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
           regions.push({
             startDistance: distances[regionStart],
             endDistance: distances[regionEnd],
@@ -135,12 +116,6 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
   // Handle final region
   if (regionStart !== null && regionEnd !== null && steepPointsInRegion >= 3) {
     regionEnd = Math.min(trackPoints.length - 1, regionEnd + 1);
-    const region = {
-      startDistance: distances[regionStart] / 1000,
-      endDistance: distances[regionEnd] / 1000,
-      severity: maxSeverity
-    };
-    console.log(`Steep region (end): ${region.startDistance.toFixed(2)}km - ${region.endDistance.toFixed(2)}km, severity: ${region.severity.toFixed(2)}, points: ${steepPointsInRegion}`);
     regions.push({
       startDistance: distances[regionStart],
       endDistance: distances[regionEnd],
@@ -148,6 +123,5 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
     });
   }
 
-  console.log(`Total anomaly regions detected: ${regions.length}`);
   return regions;
 };

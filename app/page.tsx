@@ -13,8 +13,6 @@ export default function Home() {
   const [filename, setFilename] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
-  console.log('Home component rendered, gpxData:', gpxData ? 'loaded' : 'not loaded');
-
   // Load sample.gpx on mount
   useEffect(() => {
     const loadSampleGPX = async () => {
@@ -41,11 +39,8 @@ export default function Home() {
   }, []);
 
   const handleFileUpload = (content: string, uploadedFilename: string) => {
-    console.log('File uploaded:', uploadedFilename);
-
     try {
       const parsed = parseGPX(content);
-      console.log('GPX parsed successfully:', parsed);
 
       setGpxData(parsed);
       setOriginalContent(content);
