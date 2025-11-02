@@ -235,7 +235,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   } | null>(null);
   const dragSnapshotRef = useRef<TrackPoint[] | null>(null);
   const [smoothingRadius, setSmoothingRadius] = useState(5);
-  const [smoothingStrength, setSmoothingStrength] = useState(0.4);
+  const [smoothingStrength, setSmoothingStrength] = useState(0.25);
   const [anomalyThreshold, setAnomalyThreshold] = useState(10); // Meters for elevation change detection
   const [history, setHistory] = useState<
     {
@@ -244,6 +244,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
     }[]
   >([]);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [showAnomalies, setShowAnomalies] = useState(true);
   const [showMap, setShowMap] = useState(true);
   const [mapKey, setMapKey] = useState(0);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
@@ -326,6 +327,13 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
   const anomalyRegions = useMemo(() => {
     return allAnomalyRegions.filter((_, index) => !ignoredAnomalies.has(index));
   }, [allAnomalyRegions, ignoredAnomalies]);
+
+  // Reset ignored anomalies when toggling anomaly detection back on
+  useEffect(() => {
+    if (showAnomalies) {
+      setIgnoredAnomalies(new Set());
+    }
+  }, [showAnomalies]);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -1028,11 +1036,19 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <img src="./logo.png" alt="GPX Elevation Profile Editor" className="h-10 w-10" />
             <h1 className="text-2xl font-bold text-slate-900">Elevation Profile Editor</h1>
           </div>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
             <span className="text-sm text-slate-600">Loaded GPX file:</span>
             <Badge variant="secondary" className="font-mono text-sm">
               {filename}
             </Badge>
+            {gpxData.name && (
+              <>
+                <span className="text-sm text-slate-400">•</span>
+                <Badge variant="outline" className="text-sm">
+                  {gpxData.name}
+                </Badge>
+              </>
+            )}
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1184,19 +1200,19 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600">
-                  Anomaly detection threshold (1-50 m)
+                  Anomaly detection threshold (1-100 m)
                 </Label>
                 <span className="text-sm text-slate-600">{anomalyThreshold} m</span>
               </div>
               <Slider
                 id="anomaly-threshold"
                 min={1}
-                max={50}
+                max={150}
                 step={1}
                 value={[anomalyThreshold]}
                 onValueChange={(value: number[]) => {
                   const nextValue = value[0] ?? anomalyThreshold;
-                  setAnomalyThreshold(Math.min(Math.max(nextValue, 1), 50));
+                  setAnomalyThreshold(Math.min(Math.max(nextValue, 1), 100));
                 }}
               />
             </div>
@@ -1214,7 +1230,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
         <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 flex-wrap">
             <CardTitle>Elevation Profile</CardTitle>
-            {anomalyRegions.length > 0 && (
+            {showAnomalies && anomalyRegions.length > 0 && (
               <Badge
                 variant="outline"
                 className="bg-red-100 text-red-800 border-transparent hover:bg-red-100 pointer-events-none"
@@ -1271,6 +1287,24 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
               variant="ghost"
               size="sm"
               className="text-slate-600 hover:text-slate-800"
+              onClick={() => setShowAnomalies(prev => !prev)}
+            >
+              {showAnomalies ? (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Hide anomalies
+                </>
+              ) : (
+                <>
+                  <EyeOff className="h-4 w-4 mr-2" />
+                  Show anomalies
+                </>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-600 hover:text-slate-800"
               onClick={() => {
                 setShowMap(prev => {
                   if (!prev) {
@@ -1318,7 +1352,7 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
 
               <div className="h-96 w-full relative" style={{ minHeight: '384px' }} ref={chartContainerRef}>
                 {/* Anomaly close buttons overlay */}
-                {anomalyRegions.length > 0 && chartContainerRef.current && (
+                {showAnomalies && anomalyRegions.length > 0 && chartContainerRef.current && (
                   <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
                     {anomalyRegions.map((region, index) => {
                       const offsets = anomalyButtonOffsets[index];
@@ -1398,8 +1432,8 @@ export function ElevationEditor({ gpxData, originalContent, filename, onLoadNewF
                       }}
                     />
                     {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
-                    {anomalyRegions.length > 0 && console.log('Rendering', anomalyRegions.length, 'anomaly regions')}
-                    {anomalyRegions.map((region, index) => {
+                    {showAnomalies && anomalyRegions.length > 0 && console.log('Rendering', anomalyRegions.length, 'anomaly regions')}
+                    {showAnomalies && anomalyRegions.map((region, index) => {
                       console.log(`Rendering ReferenceArea ${index}:`, {
                         x1: region.startDistance,
                         x2: region.endDistance,
