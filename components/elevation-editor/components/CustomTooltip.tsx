@@ -34,11 +34,9 @@ export function CustomTooltip({
 
   return (
     <div
+      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-md text-slate-900 dark:text-slate-100"
       style={{
-        backgroundColor: 'white',
-        border: '1px solid #e2e8f0',
         borderRadius: isMobile ? '4px' : '8px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
         padding: isMobile ? '4px 6px' : '10px',
         fontSize: isMobile ? '10px' : '14px'
       }}

@@ -41,14 +41,14 @@ export function ControlsCard({
       <Card>
         <CollapsibleTrigger asChild>
           <CardHeader className={cn(
-            "cursor-pointer hover:bg-slate-50 transition-colors",
+            "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors",
             !isOpen && "p-[15px]"
           )}>
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">Controls</CardTitle>
               <ChevronDown
                 className={cn(
-                  "h-5 w-5 text-slate-600 transition-transform duration-200",
+                  "h-5 w-5 text-slate-600 dark:text-slate-400 transition-transform duration-200",
                   isOpen && "rotate-180"
                 )}
               />
@@ -61,10 +61,10 @@ export function ControlsCard({
           {/* Smoothing Radius */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="smoothing-radius" className="text-sm text-slate-600">
+              <Label htmlFor="smoothing-radius" className="text-sm text-slate-600 dark:text-slate-400">
                 Smoothing affected points (each side)
               </Label>
-              <span className="text-sm text-slate-600">{Math.round(smoothingRadius)} pts</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400">{Math.round(smoothingRadius)} pts</span>
             </div>
             <Slider
               id="smoothing-radius"
@@ -82,10 +82,10 @@ export function ControlsCard({
           {/* Smoothing Strength */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="smoothing-strength" className="text-sm text-slate-600">
+              <Label htmlFor="smoothing-strength" className="text-sm text-slate-600 dark:text-slate-400">
                 Smoothing intensity
               </Label>
-              <span className="text-sm text-slate-600">
+              <span className="text-sm text-slate-600 dark:text-slate-400">
                 {Math.round(smoothingStrength * 100)}%
               </span>
             </div>
@@ -105,10 +105,10 @@ export function ControlsCard({
           {/* Anomaly Threshold */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600">
+              <Label htmlFor="anomaly-threshold" className="text-sm text-slate-600 dark:text-slate-400">
                 Anomaly detection threshold (1-100 m)
               </Label>
-              <span className="text-sm text-slate-600">{anomalyThreshold} m</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400">{anomalyThreshold} m</span>
             </div>
             <Slider
               id="anomaly-threshold"
@@ -123,7 +123,7 @@ export function ControlsCard({
             />
           </div>
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Dragging uses smoothing settings to blend the selected point with its neighbours.
           Clicking without moving applies a gentle average using the same radius and intensity.
           Anomaly threshold controls the minimum elevation change (in meters) required to detect

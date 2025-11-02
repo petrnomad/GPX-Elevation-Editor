@@ -60,14 +60,14 @@ export default function Home() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex justify-center items-center">
-        <div className="text-lg text-slate-600">Loading GPX Editor...</div>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex justify-center items-center">
+        <div className="text-lg text-slate-600 dark:text-slate-400">Loading GPX Editor...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       <Toaster />
       <div className="flex-1 px-[25px]">
         {gpxData && (

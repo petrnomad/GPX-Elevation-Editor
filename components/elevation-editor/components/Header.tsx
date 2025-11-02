@@ -5,6 +5,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Undo2, RotateCcw, Upload, Download } from 'lucide-react';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 interface HeaderProps {
   filename: string;
@@ -30,7 +31,7 @@ export function Header({
 }: HeaderProps) {
   return (
     <div
-      className="sticky top-0 z-50 bg-gray-50 pt-[10px] pb-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between -mx-6 px-6"
+      className="sticky top-0 z-50 bg-gray-50 dark:bg-gray-900 pt-[10px] pb-4 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between -mx-6 px-6"
       style={{ marginTop: 0 }}
     >
       <div>
@@ -40,12 +41,12 @@ export function Header({
             alt="GPX Elevation Profile Editor"
             className="h-6 w-6 md:h-10 md:w-10"
           />
-          <h1 className="text-lg md:text-2xl font-bold text-slate-900">
+          <h1 className="text-lg md:text-2xl font-bold text-slate-900 dark:text-slate-100">
             Elevation Profile Editor
           </h1>
         </div>
         <div className="mt-1 md:mt-2 flex items-center gap-1 md:gap-2 flex-wrap">
-          <span className="text-xs md:text-sm text-slate-600">Loaded GPX file:</span>
+          <span className="text-xs md:text-sm text-slate-600 dark:text-slate-400">Loaded GPX file:</span>
           <Badge variant="secondary" className="font-mono text-xs md:text-sm">
             {filename}
           </Badge>
@@ -59,7 +60,11 @@ export function Header({
           )}
         </div>
       </div>
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap relative">
+        {/* Theme toggle - absolute positioned on mobile, normal flow on desktop */}
+        <div className="absolute top-[-60px] right-0 md:relative md:top-0">
+          <ThemeToggle />
+        </div>
         <Button
           variant="outline"
           onClick={onUndo}

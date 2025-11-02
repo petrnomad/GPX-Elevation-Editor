@@ -17,7 +17,6 @@ import { TrackPoint } from '@/lib/gpx-parser';
 import { ChartDataPoint, AnomalyRegion, ElevationStats, AnomalyButtonOffset } from '../types';
 import { CHART_MARGINS_DESKTOP, CHART_MARGINS_MOBILE } from '../constants';
 import { ZoomControls } from './ZoomControls';
-import { PanControls } from './PanControls';
 import { AnomalyCloseButtons } from './AnomalyCloseButtons';
 import { CustomTooltip } from './CustomTooltip';
 
@@ -33,6 +32,7 @@ interface ElevationChartProps {
   showAnomalies: boolean;
   anomalyRegions: AnomalyRegion[];
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
+  gridBounds: { top: number; left: number; width: number; height: number } | null;
   hoveredAnomalyIndex: number | null;
   chartContainerRef: React.RefObject<HTMLDivElement | null>;
   convertDistance: (meters: number) => number;
@@ -67,6 +67,7 @@ export function ElevationChart({
   showAnomalies,
   anomalyRegions,
   anomalyButtonOffsets,
+  gridBounds,
   hoveredAnomalyIndex,
   chartContainerRef,
   convertDistance,
@@ -85,34 +86,39 @@ export function ElevationChart({
   onPanLeft,
   onPanRight
 }: ElevationChartProps) {
+  // Filter anomalies to only show those visible in current zoom domain
+  const visibleAnomalyRegions = zoomDomain
+    ? anomalyRegions.filter(region => {
+        const [domainMin, domainMax] = zoomDomain;
+        // Show anomaly if any part of it is visible in the domain
+        return region.endDistance >= domainMin && region.startDistance <= domainMax;
+      })
+    : anomalyRegions;
+
   return (
     <div className="select-none relative">
-      {/* Zoom controls overlay */}
+      {/* Zoom and Pan controls overlay */}
       <ZoomControls
         isMobile={isMobile}
         zoomDomain={zoomDomain}
         onZoomIn={onZoomIn}
         onZoomOut={onZoomOut}
         onResetZoom={onResetZoom}
-      />
-
-      {/* Pan controls overlay */}
-      <PanControls
-        isMobile={isMobile}
-        zoomDomain={zoomDomain}
         onPanLeft={onPanLeft}
         onPanRight={onPanRight}
       />
 
-      <div className="h-96 w-full relative" style={{ minHeight: '384px' }} ref={chartContainerRef}>
+      <div className="h-96 w-full relative overflow-hidden" style={{ minHeight: '384px' }} ref={chartContainerRef}>
         {/* Anomaly close buttons overlay */}
         <AnomalyCloseButtons
           show={showAnomalies}
-          anomalyRegions={anomalyRegions}
+          anomalyRegions={visibleAnomalyRegions}
+          allAnomalyRegions={anomalyRegions}
           anomalyButtonOffsets={anomalyButtonOffsets}
           hoveredAnomalyIndex={hoveredAnomalyIndex}
           onIgnoreAnomaly={onIgnoreAnomaly}
           onHoverChange={onHoverAnomalyChange}
+          gridBounds={gridBounds}
         />
 
         <ResponsiveContainer width="100%" height="100%" debounce={50}>
@@ -124,7 +130,7 @@ export function ElevationChart({
             onMouseUp={onChartMouseUp}
             onMouseLeave={onChartMouseLeave}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" className="recharts-grid" />
             <XAxis
               dataKey="distance"
               type="number"
@@ -165,23 +171,17 @@ export function ElevationChart({
 
             {/* Anomaly regions - light red background (must come BEFORE Lines for proper z-order) */}
             {showAnomalies &&
-              anomalyRegions.length > 0 &&
-              console.log('Rendering', anomalyRegions.length, 'anomaly regions')}
-            {showAnomalies &&
-              anomalyRegions.map((region, index) => {
-                console.log(`Rendering ReferenceArea ${index}:`, {
-                  x1: region.startDistance,
-                  x2: region.endDistance,
-                  opacity: Math.min(0.4 + region.severity * 0.1, 0.8)
-                });
+              visibleAnomalyRegions.map((region) => {
+                const originalIndex = anomalyRegions.indexOf(region);
+                const opacity = hoveredAnomalyIndex === originalIndex ? 0.4 : 0.2;
                 return (
                   <ReferenceArea
-                    key={`anomaly-${index}`}
-                    className={`anomaly-area anomaly-area-${index}`}
+                    key={`anomaly-${originalIndex}`}
+                    className={`anomaly-area anomaly-area-${originalIndex}`}
                     x1={region.startDistance}
                     x2={region.endDistance}
                     fill="#ff0000"
-                    fillOpacity={hoveredAnomalyIndex === index ? 0.4 : 0.2}
+                    fillOpacity={opacity}
                     ifOverflow="visible"
                   />
                 );

@@ -9,6 +9,7 @@ import { ANOMALY_BUTTON_SIZE, ANOMALY_BUTTON_PADDING } from '../constants';
 export interface UseAnomalyButtonPositioningResult {
   chartContainerRef: React.RefObject<HTMLDivElement | null>;
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
+  gridBounds: { top: number; left: number; width: number; height: number } | null;
 }
 
 /**
@@ -30,6 +31,7 @@ export function useAnomalyButtonPositioning(
 ): UseAnomalyButtonPositioningResult {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [anomalyButtonOffsets, setAnomalyButtonOffsets] = useState<Record<number, AnomalyButtonOffset>>({});
+  const [gridBounds, setGridBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -49,6 +51,19 @@ export function useAnomalyButtonPositioning(
         return;
       }
 
+      // Get cartesian grid bounds
+      const grid = container.querySelector<SVGGraphicsElement>('.recharts-cartesian-grid');
+      if (grid) {
+        const containerRect = container.getBoundingClientRect();
+        const gridRect = grid.getBoundingClientRect();
+        setGridBounds({
+          top: gridRect.top - containerRect.top,
+          left: gridRect.left - containerRect.left,
+          width: gridRect.width,
+          height: gridRect.height
+        });
+      }
+
       const containerRect = container.getBoundingClientRect();
       const nextStyles: Record<number, AnomalyButtonOffset> = {};
 
@@ -61,7 +76,7 @@ export function useAnomalyButtonPositioning(
         }
 
         const rectBox = shape.getBoundingClientRect();
-        const rawRight = containerRect.right - rectBox.right + ANOMALY_BUTTON_PADDING - 14;
+        const rawRight = containerRect.right - rectBox.right + ANOMALY_BUTTON_PADDING - 40;
 
         const clampedRight = Math.max(
           ANOMALY_BUTTON_PADDING,
@@ -139,6 +154,7 @@ export function useAnomalyButtonPositioning(
 
   return {
     chartContainerRef,
-    anomalyButtonOffsets
+    anomalyButtonOffsets,
+    gridBounds
   };
 }
