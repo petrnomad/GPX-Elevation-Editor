@@ -43,15 +43,17 @@ interface ChartCardProps {
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
   gridBounds: { top: number; left: number; width: number; height: number } | null;
   hoveredPointIndex: number | null;
-  hoveredAnomalyIndex: number | null;
+  hoveredAnomalyKey: string | null;
   mapKey: number;
   chartContainerRef: React.RefObject<HTMLDivElement | null>;
+  isPanningMode: boolean;
 
   // Unit conversion
   convertDistance: (meters: number) => number;
   convertElevation: (meters: number) => number;
   distanceUnitLabel: string;
   elevationUnitLabel: string;
+  getAnomalyKey: (region: { startDistance: number; endDistance: number }) => string;
 
   // Event handlers
   onUnitSystemChange: (system: UnitSystem) => void;
@@ -63,8 +65,8 @@ interface ChartCardProps {
   onChartMouseMove: (e: any) => void;
   onChartMouseUp: () => void;
   onChartMouseLeave: () => void;
-  onIgnoreAnomaly: (index: number) => void;
-  onHoverAnomalyChange: (index: number | null) => void;
+  onIgnoreAnomaly: (key: string) => void;
+  onHoverAnomalyChange: (key: string | null) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
@@ -92,13 +94,15 @@ export function ChartCard({
   anomalyButtonOffsets,
   gridBounds,
   hoveredPointIndex,
-  hoveredAnomalyIndex,
+  hoveredAnomalyKey,
   mapKey,
   chartContainerRef,
+  isPanningMode,
   convertDistance,
   convertElevation,
   distanceUnitLabel,
   elevationUnitLabel,
+  getAnomalyKey,
   onUnitSystemChange,
   onToggleOriginal,
   onToggleAnomalies,
@@ -152,12 +156,14 @@ export function ChartCard({
             anomalyRegions={anomalyRegions}
             anomalyButtonOffsets={anomalyButtonOffsets}
             gridBounds={gridBounds}
-            hoveredAnomalyIndex={hoveredAnomalyIndex}
+            hoveredAnomalyKey={hoveredAnomalyKey}
             chartContainerRef={chartContainerRef}
+            isPanningMode={isPanningMode}
             convertDistance={convertDistance}
             convertElevation={convertElevation}
             distanceUnitLabel={distanceUnitLabel}
             elevationUnitLabel={elevationUnitLabel}
+            getAnomalyKey={getAnomalyKey}
             onChartMouseDown={onChartMouseDown}
             onChartMouseMove={onChartMouseMove}
             onChartMouseUp={onChartMouseUp}

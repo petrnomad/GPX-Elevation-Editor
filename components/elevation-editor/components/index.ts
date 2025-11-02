@@ -15,3 +15,4 @@ export { AnomalyCloseButtons } from './AnomalyCloseButtons';
 export { CustomTooltip } from './CustomTooltip';
 export { ElevationChart } from './ElevationChart';
 export { ChartCard } from './ChartCard';
+export { KeyboardShortcutsCard } from './KeyboardShortcutsCard';

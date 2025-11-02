@@ -9,9 +9,10 @@ interface AnomalyCloseButtonsProps {
   anomalyRegions: AnomalyRegion[];
   allAnomalyRegions: AnomalyRegion[];
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
-  hoveredAnomalyIndex: number | null;
-  onIgnoreAnomaly: (index: number) => void;
-  onHoverChange: (index: number | null) => void;
+  hoveredAnomalyKey: string | null;
+  getAnomalyKey: (region: { startDistance: number; endDistance: number }) => string;
+  onIgnoreAnomaly: (key: string) => void;
+  onHoverChange: (key: string | null) => void;
   gridBounds: { top: number; left: number; width: number; height: number } | null;
 }
 
@@ -23,7 +24,8 @@ export function AnomalyCloseButtons({
   anomalyRegions,
   allAnomalyRegions,
   anomalyButtonOffsets,
-  hoveredAnomalyIndex,
+  hoveredAnomalyKey,
+  getAnomalyKey,
   onIgnoreAnomaly,
   onHoverChange,
   gridBounds
@@ -44,17 +46,23 @@ export function AnomalyCloseButtons({
       }}
     >
       {anomalyRegions.map((region) => {
-        const originalIndex = allAnomalyRegions.indexOf(region);
-        const offsets = anomalyButtonOffsets[originalIndex];
-        if (!offsets || originalIndex === -1) {
+        const anomalyKey = getAnomalyKey(region);
+        // Find index in full anomalyRegions array for offset lookup
+        const fullIndex = allAnomalyRegions.findIndex(r => getAnomalyKey(r) === anomalyKey);
+        if (fullIndex === -1) {
+          return null;
+        }
+
+        const offsets = anomalyButtonOffsets[fullIndex];
+        if (!offsets) {
           return null;
         }
 
         return (
           <button
-            key={`close-${originalIndex}`}
-            onClick={() => onIgnoreAnomaly(originalIndex)}
-            onMouseEnter={() => onHoverChange(originalIndex)}
+            key={`close-${anomalyKey}`}
+            onClick={() => onIgnoreAnomaly(anomalyKey)}
+            onMouseEnter={() => onHoverChange(anomalyKey)}
             onMouseLeave={() => onHoverChange(null)}
             className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
             style={{

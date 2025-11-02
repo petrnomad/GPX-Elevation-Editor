@@ -22,7 +22,8 @@ import {
   StatsGrid,
   HelpCard,
   ControlsCard,
-  ChartCard
+  ChartCard,
+  KeyboardShortcutsCard
 } from './elevation-editor/components';
 
 export function ElevationEditor({
@@ -46,9 +47,11 @@ export function ElevationEditor({
   const [smoothingRadius, setSmoothingRadius] = useState(5);
   const [smoothingStrength, setSmoothingStrength] = useState(0.25);
   const [anomalyThreshold, setAnomalyThreshold] = useState(10);
-  const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
+  const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<string>>(new Set());
   const [mapKey, setMapKey] = useState(0);
-  const [hoveredAnomalyIndex, setHoveredAnomalyIndex] = useState<number | null>(null);
+  const [hoveredAnomalyKey, setHoveredAnomalyKey] = useState<string | null>(null);
+  const [isPanningMode, setIsPanningMode] = useState(false);
+  const [panDragState, setPanDragState] = useState<{ startX: number; startDomain: [number, number] } | null>(null);
 
   // ============================================================================
   // Custom hooks
@@ -60,6 +63,7 @@ export function ElevationEditor({
   const [showMap, setShowMap] = useLocalStorageState('elevationEditor.showMap', true);
   const [showHelpCard, setShowHelpCard] = useLocalStorageState('elevationEditor.showHelpCard', true);
   const [showMobileWarning, setShowMobileWarning] = useLocalStorageState('elevationEditor.showMobileWarning', true);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(true);
 
   const {
     unitSystem,
@@ -81,7 +85,7 @@ export function ElevationEditor({
     dragSnapshotRef
   );
 
-  const { zoomDomain, zoomIn, zoomOut, resetZoom, panLeft, panRight } = useZoomPan(
+  const { zoomDomain, setZoomDomain, zoomIn, zoomOut, resetZoom, panLeft, panRight } = useZoomPan(
     gpxData.totalDistance
   );
 
@@ -121,10 +125,15 @@ export function ElevationEditor({
     [gpxData.trackPoints]
   );
 
+  // Helper function to create unique key for anomaly region
+  const getAnomalyKey = useCallback((region: { startDistance: number; endDistance: number }) => {
+    return `${region.startDistance.toFixed(3)}-${region.endDistance.toFixed(3)}`;
+  }, []);
+
   const anomalyRegions = useMemo(() => {
     const regions = detectElevationAnomalies(trackPoints, anomalyThreshold);
-    return regions.filter((_, index) => !ignoredAnomalies.has(index));
-  }, [trackPoints, anomalyThreshold, ignoredAnomalies]);
+    return regions.filter((region) => !ignoredAnomalies.has(getAnomalyKey(region)));
+  }, [trackPoints, anomalyThreshold, ignoredAnomalies, getAnomalyKey]);
 
   const { chartContainerRef, anomalyButtonOffsets, gridBounds } = useAnomalyButtonPositioning(
     anomalyRegions,
@@ -145,6 +154,30 @@ export function ElevationEditor({
       dragSnapshotRef,
       setDragState
     );
+
+  // Handle Ctrl/Cmd key press for panning mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && zoomDomain) {
+        setIsPanningMode(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) {
+        setIsPanningMode(false);
+        setPanDragState(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [zoomDomain]);
 
   // Handle Ctrl/Cmd + mouse wheel zoom
   useEffect(() => {
@@ -173,6 +206,57 @@ export function ElevationEditor({
       chartElement.removeEventListener('wheel', handleWheel);
     };
   }, [chartContainerRef, zoomIn, zoomOut]);
+
+  // ============================================================================
+  // Panning handlers
+  // ============================================================================
+  const handlePanMouseDown = useCallback((e: any) => {
+    if (!isPanningMode || !zoomDomain) return;
+
+    const chartX = e?.chartX;
+    if (typeof chartX !== 'number') return;
+
+    setPanDragState({
+      startX: chartX,
+      startDomain: [zoomDomain[0], zoomDomain[1]]
+    });
+  }, [isPanningMode, zoomDomain]);
+
+  const handlePanMouseMove = useCallback((e: any) => {
+    if (!isPanningMode || !panDragState || !zoomDomain) return;
+
+    const chartX = e?.chartX;
+    if (typeof chartX !== 'number') return;
+
+    const chartWidth = e?.chartWidth ?? 800;
+    const pixelDelta = panDragState.startX - chartX;
+    const domainRange = panDragState.startDomain[1] - panDragState.startDomain[0];
+    const distancePerPixel = domainRange / chartWidth;
+    const distanceDelta = pixelDelta * distancePerPixel;
+
+    let newMin = panDragState.startDomain[0] + distanceDelta;
+    let newMax = panDragState.startDomain[1] + distanceDelta;
+
+    // Prevent over-panning
+    if (newMin < 0) {
+      newMin = 0;
+      newMax = domainRange;
+    }
+    if (newMax > gpxData.totalDistance) {
+      newMax = gpxData.totalDistance;
+      newMin = gpxData.totalDistance - domainRange;
+    }
+
+    setZoomDomain([newMin, newMax]);
+  }, [isPanningMode, panDragState, zoomDomain, gpxData.totalDistance, setZoomDomain]);
+
+  const handlePanMouseUp = useCallback(() => {
+    setPanDragState(null);
+  }, []);
+
+  const handlePanMouseLeave = useCallback(() => {
+    setPanDragState(null);
+  }, []);
 
   // ============================================================================
   // File operations
@@ -229,8 +313,8 @@ export function ElevationEditor({
   // ============================================================================
   // Other handlers
   // ============================================================================
-  const handleIgnoreAnomaly = useCallback((index: number) => {
-    setIgnoredAnomalies((prev) => new Set(prev).add(index));
+  const handleIgnoreAnomaly = useCallback((key: string) => {
+    setIgnoredAnomalies((prev) => new Set(prev).add(key));
   }, []);
 
   const handleToggleMap = useCallback(() => {
@@ -241,6 +325,55 @@ export function ElevationEditor({
       return !prev;
     });
   }, [setShowMap]);
+
+  // ============================================================================
+  // Global keyboard shortcuts
+  // ============================================================================
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Global shortcuts (CMD/CTRL + key)
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'z':
+            if (canUndo) {
+              e.preventDefault();
+              handleUndo();
+            }
+            break;
+          case 'o':
+            e.preventDefault();
+            handleLoadNewFile();
+            break;
+          case 's':
+            e.preventDefault();
+            setShowOriginal(prev => !prev);
+            break;
+          case 'm':
+            e.preventDefault();
+            handleToggleMap();
+            break;
+          case 'a':
+            e.preventDefault();
+            setShowAnomalies(prev => !prev);
+            break;
+          case 'i':
+            e.preventDefault();
+            setUnitSystem(unitSystem === 'metric' ? 'imperial' : 'metric');
+            break;
+          case 'd':
+            e.preventDefault();
+            handleDownload();
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [canUndo, handleUndo, handleLoadNewFile, handleToggleMap, setShowOriginal, setShowAnomalies, unitSystem, setUnitSystem, handleDownload]);
 
   // ============================================================================
   // Render
@@ -305,29 +438,36 @@ export function ElevationEditor({
         anomalyButtonOffsets={anomalyButtonOffsets}
         gridBounds={gridBounds}
         hoveredPointIndex={hoveredPointIndex}
-        hoveredAnomalyIndex={hoveredAnomalyIndex}
+        hoveredAnomalyKey={hoveredAnomalyKey}
         mapKey={mapKey}
         chartContainerRef={chartContainerRef}
+        isPanningMode={isPanningMode}
         convertDistance={convertDistance}
         convertElevation={convertElevation}
         distanceUnitLabel={distanceUnitLabel}
         elevationUnitLabel={elevationUnitLabel}
+        getAnomalyKey={getAnomalyKey}
         onUnitSystemChange={setUnitSystem}
         onToggleOriginal={() => setShowOriginal((prev) => !prev)}
         onToggleAnomalies={() => setShowAnomalies((prev) => !prev)}
         onToggleMap={handleToggleMap}
         onDismissMobileWarning={() => setShowMobileWarning(false)}
-        onChartMouseDown={handleChartMouseDown}
-        onChartMouseMove={handleChartMouseMove}
-        onChartMouseUp={handleChartMouseUp}
-        onChartMouseLeave={handleChartMouseLeave}
+        onChartMouseDown={isPanningMode ? handlePanMouseDown : handleChartMouseDown}
+        onChartMouseMove={isPanningMode ? handlePanMouseMove : handleChartMouseMove}
+        onChartMouseUp={isPanningMode ? handlePanMouseUp : handleChartMouseUp}
+        onChartMouseLeave={isPanningMode ? handlePanMouseLeave : handleChartMouseLeave}
         onIgnoreAnomaly={handleIgnoreAnomaly}
-        onHoverAnomalyChange={setHoveredAnomalyIndex}
+        onHoverAnomalyChange={setHoveredAnomalyKey}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onResetZoom={resetZoom}
         onPanLeft={panLeft}
         onPanRight={panRight}
+      />
+
+      <KeyboardShortcutsCard
+        show={showKeyboardShortcuts}
+        onDismiss={() => setShowKeyboardShortcuts(false)}
       />
     </div>
   );
