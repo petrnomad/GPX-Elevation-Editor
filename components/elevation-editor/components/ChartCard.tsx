@@ -41,6 +41,7 @@ interface ChartCardProps {
   zoomDomain: [number, number] | null;
   anomalyRegions: AnomalyRegion[];
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
+  gridBounds: { top: number; left: number; width: number; height: number } | null;
   hoveredPointIndex: number | null;
   hoveredAnomalyIndex: number | null;
   mapKey: number;
@@ -89,6 +90,7 @@ export function ChartCard({
   zoomDomain,
   anomalyRegions,
   anomalyButtonOffsets,
+  gridBounds,
   hoveredPointIndex,
   hoveredAnomalyIndex,
   mapKey,
@@ -149,6 +151,7 @@ export function ChartCard({
             showAnomalies={showAnomalies}
             anomalyRegions={anomalyRegions}
             anomalyButtonOffsets={anomalyButtonOffsets}
+            gridBounds={gridBounds}
             hoveredAnomalyIndex={hoveredAnomalyIndex}
             chartContainerRef={chartContainerRef}
             convertDistance={convertDistance}

@@ -85,3 +85,8 @@
 body > nextjs-portal {
   display: none;
 }
+
+/* Dark mode chart grid */
+.dark line.recharts-grid {
+  stroke: #334155 !important;
+}

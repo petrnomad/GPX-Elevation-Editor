@@ -87,8 +87,8 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
   for (let i = 0; i < isSteep.length; i++) {
     if (isSteep[i]) {
       if (regionStart === null) {
-        // Start new region - go back to capture the full anomaly
-        regionStart = Math.max(0, i - 5);
+        // Start new region - go back slightly to capture the full anomaly
+        regionStart = Math.max(0, i - 1);
         regionEnd = i;
         const severity = i > 0 ? gradients[i - 1] / gradientThreshold : 1;
         maxSeverity = severity;
@@ -107,8 +107,8 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
       gapCounter++;
 
       if (gapCounter > maxGap) {
-        // Gap too large, end the region - extend forward to capture the full anomaly
-        regionEnd = Math.min(trackPoints.length - 1, regionEnd! + 3);
+        // Gap too large, end the region - extend forward slightly to capture the full anomaly
+        regionEnd = Math.min(trackPoints.length - 1, regionEnd! + 1);
 
         if (steepPointsInRegion >= 3) { // At least 3 steep points (increased from 2)
           const region = {
@@ -134,7 +134,7 @@ export const detectElevationAnomalies = (trackPoints: TrackPoint[], threshold: n
 
   // Handle final region
   if (regionStart !== null && regionEnd !== null && steepPointsInRegion >= 3) {
-    regionEnd = Math.min(trackPoints.length - 1, regionEnd + 5);
+    regionEnd = Math.min(trackPoints.length - 1, regionEnd + 1);
     const region = {
       startDistance: distances[regionStart] / 1000,
       endDistance: distances[regionEnd] / 1000,

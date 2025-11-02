@@ -48,6 +48,7 @@ export function ElevationEditor({
   const [anomalyThreshold, setAnomalyThreshold] = useState(10);
   const [ignoredAnomalies, setIgnoredAnomalies] = useState<Set<number>>(new Set());
   const [mapKey, setMapKey] = useState(0);
+  const [hoveredAnomalyIndex, setHoveredAnomalyIndex] = useState<number | null>(null);
 
   // ============================================================================
   // Custom hooks
@@ -125,7 +126,7 @@ export function ElevationEditor({
     return regions.filter((_, index) => !ignoredAnomalies.has(index));
   }, [trackPoints, anomalyThreshold, ignoredAnomalies]);
 
-  const { chartContainerRef, anomalyButtonOffsets } = useAnomalyButtonPositioning(
+  const { chartContainerRef, anomalyButtonOffsets, gridBounds } = useAnomalyButtonPositioning(
     anomalyRegions,
     zoomDomain,
     chartData
@@ -144,6 +145,34 @@ export function ElevationEditor({
       dragSnapshotRef,
       setDragState
     );
+
+  // Handle Ctrl/Cmd + mouse wheel zoom
+  useEffect(() => {
+    const chartElement = chartContainerRef.current;
+    if (!chartElement) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Check if Ctrl (Windows/Linux) or Meta/Cmd (Mac) is pressed
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+
+        // deltaY > 0 means scroll down (zoom out)
+        // deltaY < 0 means scroll up (zoom in)
+        if (e.deltaY < 0) {
+          zoomIn();
+        } else if (e.deltaY > 0) {
+          zoomOut();
+        }
+      }
+    };
+
+    // Use passive: false to allow preventDefault()
+    chartElement.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      chartElement.removeEventListener('wheel', handleWheel);
+    };
+  }, [chartContainerRef, zoomIn, zoomOut]);
 
   // ============================================================================
   // File operations
@@ -274,8 +303,9 @@ export function ElevationEditor({
         zoomDomain={zoomDomain}
         anomalyRegions={anomalyRegions}
         anomalyButtonOffsets={anomalyButtonOffsets}
+        gridBounds={gridBounds}
         hoveredPointIndex={hoveredPointIndex}
-        hoveredAnomalyIndex={null}
+        hoveredAnomalyIndex={hoveredAnomalyIndex}
         mapKey={mapKey}
         chartContainerRef={chartContainerRef}
         convertDistance={convertDistance}
@@ -292,7 +322,7 @@ export function ElevationEditor({
         onChartMouseUp={handleChartMouseUp}
         onChartMouseLeave={handleChartMouseLeave}
         onIgnoreAnomaly={handleIgnoreAnomaly}
-        onHoverAnomalyChange={() => {}}
+        onHoverAnomalyChange={setHoveredAnomalyIndex}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onResetZoom={resetZoom}

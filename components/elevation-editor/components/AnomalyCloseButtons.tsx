@@ -7,10 +7,12 @@ import { AnomalyRegion, AnomalyButtonOffset } from '../types';
 interface AnomalyCloseButtonsProps {
   show: boolean;
   anomalyRegions: AnomalyRegion[];
+  allAnomalyRegions: AnomalyRegion[];
   anomalyButtonOffsets: Record<number, AnomalyButtonOffset>;
   hoveredAnomalyIndex: number | null;
   onIgnoreAnomaly: (index: number) => void;
   onHoverChange: (index: number | null) => void;
+  gridBounds: { top: number; left: number; width: number; height: number } | null;
 }
 
 /**
@@ -19,30 +21,42 @@ interface AnomalyCloseButtonsProps {
 export function AnomalyCloseButtons({
   show,
   anomalyRegions,
+  allAnomalyRegions,
   anomalyButtonOffsets,
   hoveredAnomalyIndex,
   onIgnoreAnomaly,
-  onHoverChange
+  onHoverChange,
+  gridBounds
 }: AnomalyCloseButtonsProps) {
-  if (!show || anomalyRegions.length === 0) {
+  if (!show || anomalyRegions.length === 0 || !gridBounds) {
     return null;
   }
 
   return (
-    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-      {anomalyRegions.map((region, index) => {
-        const offsets = anomalyButtonOffsets[index];
-        if (!offsets) {
+    <div
+      className="absolute pointer-events-none overflow-hidden"
+      style={{
+        zIndex: 10,
+        top: `${gridBounds.top}px`,
+        left: `${gridBounds.left}px`,
+        width: `${gridBounds.width}px`,
+        height: `${gridBounds.height}px`
+      }}
+    >
+      {anomalyRegions.map((region) => {
+        const originalIndex = allAnomalyRegions.indexOf(region);
+        const offsets = anomalyButtonOffsets[originalIndex];
+        if (!offsets || originalIndex === -1) {
           return null;
         }
 
         return (
           <button
-            key={`close-${index}`}
-            onClick={() => onIgnoreAnomaly(index)}
-            onMouseEnter={() => onHoverChange(index)}
+            key={`close-${originalIndex}`}
+            onClick={() => onIgnoreAnomaly(originalIndex)}
+            onMouseEnter={() => onHoverChange(originalIndex)}
             onMouseLeave={() => onHoverChange(null)}
-            className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
+            className="absolute pointer-events-auto bg-red-300 hover:bg-red-400 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow-md transition-colors"
             style={{
               top: 0,
               right: offsets.right
