@@ -12,6 +12,8 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-38bdf8)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<a href="https://www.producthunt.com/products/gpx-elevation-editor?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-gpx&#0045;elevation&#0045;editor" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1033849&theme=light&t=1762156288094" alt="GPX&#0032;Elevation&#0032;Editor - Edit&#0032;&#0038;&#0032;analyze&#0032;gpx&#0032;elevation&#0032;profiles&#0032;online | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+
 [Live Demo](https://elevationeditor.com) · [Report Bug](https://github.com/petrnomad/GPX-Elevation-Editor/issues) · [Request Feature](https://github.com/petrnomad/GPX-Elevation-Editor/issues)
 
 </div>
