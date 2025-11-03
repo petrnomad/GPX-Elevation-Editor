@@ -1,4 +1,4 @@
-# 🏔️ Elevation Editor
+# 🏔️ GPX Elevation Editor
 
 <div align="center">
 
