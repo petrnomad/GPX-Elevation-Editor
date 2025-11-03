@@ -64,10 +64,27 @@ export function Footer() {
 
         {/* Bottom Bar */}
         <div className="border-t border-slate-700 mt-6 pt-6 text-center text-xs text-slate-500">
-          <p>
+          <p className="mb-4">
             Built with Next.js, TypeScript, and Tailwind CSS.
             Your GPX files are processed locally in your browser - no data is uploaded to any server.
           </p>
+
+          {/* Product Hunt Badge */}
+          <div className="flex justify-center mt-6">
+            <a
+              href="https://www.producthunt.com/products/gpx-elevation-editor?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-gpx&#0045;elevation&#0045;editor"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1033849&theme=dark&t=1762156288094"
+                alt="GPX Elevation Editor - Edit & analyze gpx elevation profiles online | Product Hunt"
+                style={{ width: '250px', height: '54px' }}
+                width="250"
+                height="54"
+              />
+            </a>
+          </div>
         </div>
       </div>
     </footer>
