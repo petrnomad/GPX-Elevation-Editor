@@ -11,7 +11,7 @@ export const HISTORY_LIMIT = 100;
  * Minimum elevation change threshold (in meters) to count towards ascent/descent.
  * Changes smaller than this are considered GPS noise and ignored.
  */
-export const ELEVATION_STEP_THRESHOLD = 2.5;
+export const ELEVATION_STEP_THRESHOLD = 2;
 
 /**
  * Window size for rolling median calculation.
