@@ -396,6 +396,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <a href="https://www.producthunt.com/products/gpx-elevation-editor?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-gpx&#0045;elevation&#0045;editor" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1033849&theme=light&t=1762156288094" alt="GPX&#0032;Elevation&#0032;Editor - Edit&#0032;&#0038;&#0032;analyze&#0032;gpx&#0032;elevation&#0032;profiles&#0032;online | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 
-Made with Next.js, TypeScript, and lots of ☕
+Made with Next.js, TypeScript, and ❤️ to <a href="https://madeirajourney.com/hikes/" target="_blank">Madeira Hiking Trails</a> & lots of ☕
 
 </div>
